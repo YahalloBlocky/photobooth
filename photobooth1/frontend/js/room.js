@@ -13,6 +13,10 @@ document.getElementById('hostHint').textContent = isHost
   ? 'You\'re the host — you control shot count and start.'
   : 'Only the host can choose shot count and start the countdown.';
 
+const roleBadge = document.getElementById('roleBadge');
+roleBadge.textContent = isHost ? 'Host' : 'Guest';
+roleBadge.classList.toggle('host', isHost);
+
 let shotCount = 4;
 let capturedShots = [];
 let lastHandledShotIndex = -1;
@@ -164,6 +168,28 @@ function runCountdownAndCapture(shotIndex) {
   }, 1000);
 }
 
+// Mimics CSS object-fit: cover -- crops the source video to match the
+// destination's aspect ratio instead of stretching/distorting it.
+function getCoverCrop(video, destW, destH) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const srcAspect = vw / vh;
+  const destAspect = destW / destH;
+  let sx, sy, sw, sh;
+  if (srcAspect > destAspect) {
+    sh = vh;
+    sw = vh * destAspect;
+    sx = (vw - sw) / 2;
+    sy = 0;
+  } else {
+    sw = vw;
+    sh = vw / destAspect;
+    sx = 0;
+    sy = (vh - sh) / 2;
+  }
+  return { sx, sy, sw, sh };
+}
+
 function captureFrame() {
   const tiles = [...videoGrid.querySelectorAll('.video-tile')];
   const cols = Math.ceil(Math.sqrt(tiles.length));
@@ -184,14 +210,17 @@ function captureFrame() {
     const row = Math.floor(i / cols);
     const x = col * cellW, y = row * cellH;
 
+    const crop = getCoverCrop(video, cellW, cellH);
+    if (!crop) return;
+
     ctx.save();
     if (tile.classList.contains('local')) {
       // Flip to match the mirrored preview the user actually saw
       ctx.translate(x + cellW, y);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, cellW, cellH);
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cellW, cellH);
     } else {
-      ctx.drawImage(video, x, y, cellW, cellH);
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, x, y, cellW, cellH);
     }
     ctx.restore();
   });
@@ -201,24 +230,74 @@ function captureFrame() {
 
 // ---------- Results ----------
 const BUILTIN_BORDERS = [
-  { id: 'classic', label: 'Classic', bg: '#FBF7EE', frame: '#2B2319' },
-  { id: 'clay', label: 'Clay', bg: '#A5502E', frame: '#2B2319' },
-  { id: 'olive', label: 'Olive', bg: '#6B7548', frame: '#2B2319' }
+  {
+    id: 'classic',
+    label: 'Classic',
+    swatchBg: '#FBF7EE',
+    draw(ctx, width, height) {
+      ctx.fillStyle = '#FBF7EE';
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = '#2B2319';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(9, 9, width - 18, height - 18);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(17, 17, width - 34, height - 34);
+      drawSprockets(ctx, width, height, '#D8C6A8');
+      drawCaption(ctx, width, height, '#2B2319');
+    }
+  },
+  {
+    id: 'clay',
+    label: 'Clay',
+    swatchBg: '#A5502E',
+    draw(ctx, width, height) {
+      ctx.fillStyle = '#A5502E';
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = '#2B2319';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(9, 9, width - 18, height - 18);
+      drawSprockets(ctx, width, height, '#833E22');
+      drawCaption(ctx, width, height, '#FBF7EE');
+    }
+  },
+  {
+    id: 'olive',
+    label: 'Olive',
+    swatchBg: '#6B7548',
+    draw(ctx, width, height) {
+      ctx.fillStyle = '#6B7548';
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = '#2B2319';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(9, 9, width - 18, height - 18);
+      drawSprockets(ctx, width, height, '#525C36');
+      drawCaption(ctx, width, height, '#FBF7EE');
+    }
+  }
 ];
+
+function drawSprockets(ctx, width, height, color) {
+  const r = 3, spacing = 22, topMargin = 34, bottomMargin = 50;
+  ctx.fillStyle = color;
+  for (let y = topMargin; y < height - bottomMargin; y += spacing) {
+    ctx.beginPath(); ctx.arc(16, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(width - 16, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawCaption(ctx, width, height, color) {
+  ctx.fillStyle = color;
+  ctx.font = '600 20px "IBM Plex Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('TOGETHER BOOTH', width / 2, height - 16);
+}
 
 async function showResults() {
   document.getElementById('roomView').style.display = 'none';
   document.getElementById('resultsView').style.display = 'block';
 
-  const strip = document.getElementById('filmstrip');
-  strip.innerHTML = '';
-  capturedShots.forEach(src => {
-    const img = document.createElement('img');
-    img.src = src;
-    strip.appendChild(img);
-  });
-
   await loadBorderOptions();
+  await updatePreview();
 }
 
 async function loadBorderOptions() {
@@ -227,13 +306,14 @@ async function loadBorderOptions() {
 
   BUILTIN_BORDERS.forEach(b => {
     const swatch = document.createElement('div');
-    swatch.className = 'border-swatch' + (selectedBorder.id === b.id ? ' selected' : '');
-    swatch.style.background = b.bg;
+    swatch.className = 'border-swatch' + (selectedBorder.type === 'builtin' && selectedBorder.id === b.id ? ' selected' : '');
+    swatch.style.background = b.swatchBg;
     swatch.title = b.label;
     swatch.onclick = () => {
       selectedBorder = { type: 'builtin', id: b.id };
       [...container.children].forEach(c => c.classList.remove('selected'));
       swatch.classList.add('selected');
+      updatePreview();
     };
     container.appendChild(swatch);
   });
@@ -249,12 +329,18 @@ async function loadBorderOptions() {
         selectedBorder = { type: 'image', dataUrl: data.dataUrl };
         [...container.children].forEach(c => c.classList.remove('selected'));
         swatch.classList.add('selected');
+        updatePreview();
       };
       container.appendChild(swatch);
     });
   } catch (e) {
     console.warn('Could not load admin borders', e);
   }
+}
+
+async function updatePreview() {
+  const canvas = await renderFinalStrip();
+  document.getElementById('previewImg').src = canvas.toDataURL('image/png');
 }
 
 document.getElementById('customBorderInput').addEventListener('change', (e) => {
@@ -266,6 +352,7 @@ document.getElementById('customBorderInput').addEventListener('change', (e) => {
     img.onload = () => {
       customBorderImg = img;
       selectedBorder = { type: 'custom' };
+      updatePreview();
     };
     img.src = ev.target.result;
   };
@@ -273,7 +360,9 @@ document.getElementById('customBorderInput').addEventListener('change', (e) => {
 });
 
 function renderFinalStrip() {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
+    await document.fonts.ready;
+
     const canvas = document.getElementById('stripCanvas');
     const ctx = canvas.getContext('2d');
     const padding = 24;
@@ -286,6 +375,7 @@ function renderFinalStrip() {
     canvas.height = height;
 
     const drawPhotos = () => {
+      if (capturedShots.length === 0) { resolve(canvas); return; }
       capturedShots.forEach((src, i) => {
         const img = new Image();
         img.onload = () => {
@@ -299,11 +389,7 @@ function renderFinalStrip() {
 
     if (selectedBorder.type === 'builtin') {
       const b = BUILTIN_BORDERS.find(x => x.id === selectedBorder.id);
-      ctx.fillStyle = b.bg;
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = b.frame;
-      ctx.lineWidth = 6;
-      ctx.strokeRect(3, 3, width - 6, height - 6);
+      b.draw(ctx, width, height);
       drawPhotos();
     } else if (selectedBorder.type === 'custom' && customBorderImg) {
       ctx.drawImage(customBorderImg, 0, 0, width, height);

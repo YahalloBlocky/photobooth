@@ -301,6 +301,21 @@ input[type="text"]:focus, input[type="password"]:focus {
 }
 .room-code-banner span { color: #E7C9A8; font-weight: 600; }
 
+.role-badge {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+  background: var(--olive);
+  color: var(--surface) !important;
+}
+.role-badge.host {
+  background: var(--clay);
+}
+
 .stage {
   background: var(--ink);
   border-radius: var(--radius);
@@ -326,7 +341,9 @@ input[type="text"]:focus, input[type="password"]:focus {
 .video-tile video {
   width: 100%; height: 100%;
   object-fit: cover;
+  object-position: center;
   display: block;
+  background: #000;
 }
 
 .video-tile.local video { transform: scaleX(-1); }
@@ -456,6 +473,8 @@ input[type="text"]:focus, input[type="password"]:focus {
   width: 100%;
   border-radius: 3px;
   display: block;
+  min-height: 200px;
+  background: var(--bg-deep);
 }
 
 .border-panel {
@@ -516,4 +535,8 @@ input[type="text"]:focus, input[type="password"]:focus {
   .navbar nav a { font-size: 0.85rem; }
   .countdown-number { font-size: 5rem; }
   .filmstrip { width: 100%; max-width: 260px; }
+
+  .video-tile {
+    aspect-ratio: 3 / 4;
+  }
 }

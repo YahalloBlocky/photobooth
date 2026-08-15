@@ -47,7 +47,12 @@ class MeshRoom {
 
   async init() {
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: {
+        facingMode: 'user',
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        aspectRatio: { ideal: 4 / 3 }
+      },
       audio: true
     });
 

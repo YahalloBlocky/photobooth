@@ -22,7 +22,10 @@
 <div id="roomView">
   <div class="room-layout">
     <div>
-      <div class="room-code-banner">Room code: <span id="roomCodeText">------</span></div>
+      <div class="room-code-banner">
+        Room code: <span id="roomCodeText">------</span>
+        <span class="role-badge" id="roleBadge">Guest</span>
+      </div>
 
       <div class="stage">
         <div class="countdown-overlay" id="countdownOverlay">
@@ -64,7 +67,9 @@
 <div id="resultsView" style="display:none;">
   <div class="results-wrap">
     <div>
-      <div class="filmstrip" id="filmstrip"></div>
+      <div class="filmstrip">
+        <img id="previewImg" alt="Your photo strip preview">
+      </div>
       <div class="button-row" style="margin-top:20px;">
         <button class="btn btn-primary" id="downloadBtn">Save &amp; Download</button>
         <button class="btn btn-ghost" id="retakeBtn">Retake</button>
