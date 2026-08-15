@@ -1,6 +1,26 @@
-// Free public STUN server (helps two computers find each other)
+// STUN helps two devices find each other's public address.
+// TURN is a fallback relay for when a direct connection isn't possible
+// (common on mobile data or strict/corporate networks). This uses
+// OpenRelay, a free public TURN service -- fine for testing.
 const servers = {
-  iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }]
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    },
+    {
+      urls: "turn:openrelay.metered.ca:443?transport=tcp",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
+  ]
 };
 
 let pc = new RTCPeerConnection(servers);
@@ -21,8 +41,13 @@ async function setupMedia() {
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
   pc.ontrack = (event) => {
+    console.log("Received remote track:", event.streams[0]);
     event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
     remoteVideo.srcObject = remoteStream;
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log("ICE connection state:", pc.iceConnectionState);
   };
 
   videosDiv.classList.remove('hidden');
