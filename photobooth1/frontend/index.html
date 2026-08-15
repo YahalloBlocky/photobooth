@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LDR Photobooth (test)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>LDR Photobooth — Test Build</h1>
+
+<div id="landing">
+  <button id="createBtn">Create Room</button>
+  <br>
+  <input id="joinCodeInput" placeholder="Enter room code" maxlength="6">
+  <button id="joinBtn">Join Room</button>
+</div>
+
+<p id="status"></p>
+
+<div id="videos" class="hidden">
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
+</div>
+
+<div id="canvasWrap" class="hidden">
+  <br>
+  <button id="captureBtn">📸 Capture Both</button>
+  <br><br>
+  <canvas id="canvas" width="640" height="240"></canvas>
+  <br>
+  <button id="downloadBtn" class="hidden">Download Photo</button>
+</div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<!-- Your config (fill this in!) -->
+<script src="firebase-config.js"></script>
+
+<!-- App logic -->
+<script src="script.js"></script>
+
+</body>
+</html>
