@@ -60,6 +60,9 @@ function randomRoomCode() {
 
 // ---------- CREATE ROOM ----------
 document.getElementById('createBtn').onclick = async () => {
+  document.getElementById('createBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = true;
+
   await setupMedia();
   const roomCode = randomRoomCode();
   const roomRef = db.collection('rooms').doc(roomCode);
@@ -102,6 +105,9 @@ document.getElementById('createBtn').onclick = async () => {
 document.getElementById('joinBtn').onclick = async () => {
   const roomCode = document.getElementById('joinCodeInput').value.trim().toUpperCase();
   if (!roomCode) return alert('Enter a room code first.');
+
+  document.getElementById('createBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = true;
 
   await setupMedia();
   const roomRef = db.collection('rooms').doc(roomCode);
