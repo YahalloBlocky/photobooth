@@ -24,6 +24,7 @@ video {
   height: 240px;
   background: #000;
   border-radius: 8px;
+  transform: scaleX(-1);
 }
 
 #status {
