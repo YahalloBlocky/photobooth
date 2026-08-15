@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LDR Photobooth</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+  <a href="index.html" class="brand">📸 Together Booth</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <h1>A photobooth for two places at once.</h1>
+  <p>Create a room, send the code to someone far away, and take photos together — live, side by side — no matter where you both are.</p>
+  <div class="button-row">
+    <button class="btn btn-primary" id="createBtn">Create Room</button>
+    <button class="btn btn-secondary" id="joinOpenBtn">Join Room</button>
+  </div>
+</section>
+
+<!-- Join Room modal -->
+<div class="modal-overlay" id="joinModal">
+  <div class="modal">
+    <button class="modal-close" id="joinCloseBtn" aria-label="Close">&times;</button>
+    <h3>Join a room</h3>
+    <p style="margin-top:-6px; font-size:0.9rem;">Enter the code your partner sent you.</p>
+    <label class="field-label" for="joinCodeInput">Room code</label>
+    <input type="text" id="joinCodeInput" placeholder="e.g. 7F3KQ1" maxlength="6" autocomplete="off">
+    <p class="error-text" id="joinError" style="display:none;"></p>
+    <button class="btn btn-primary" id="joinSubmitBtn" style="width:100%;">Join</button>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/cleanup.js"></script>
+<script src="js/home.js"></script>
+
+</body>
+</html>
