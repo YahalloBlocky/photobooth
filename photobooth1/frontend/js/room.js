@@ -87,7 +87,7 @@ const mesh = new MeshRoom(roomCode, peerId, {
     statusLine.textContent = 'Waiting for others to join…';
   } catch (err) {
     console.error(err);
-    statusLine.textContent = 'Could not access camera/mic. Check permissions.';
+    statusLine.textContent = `Camera error: ${err.name || 'Unknown'} — ${err.message || err}`;
   }
 })();
 
