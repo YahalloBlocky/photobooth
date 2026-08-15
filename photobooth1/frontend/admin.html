@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — LDR Photobooth</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+  <a href="index.html" class="brand">📸 Together Booth</a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+</header>
+
+<!-- LOGIN VIEW -->
+<div id="loginView" class="page-wrap" style="max-width: 380px;">
+  <h1 style="font-size:1.8rem;">Admin login</h1>
+  <div class="card">
+    <label class="field-label" for="adminUser">Username</label>
+    <input type="text" id="adminUser" autocomplete="off">
+    <label class="field-label" for="adminPass">Password</label>
+    <input type="password" id="adminPass">
+    <p class="error-text" id="loginError" style="display:none;">Incorrect username or password.</p>
+    <button class="btn btn-primary" id="loginBtn" style="width:100%;">Log in</button>
+  </div>
+</div>
+
+<!-- DASHBOARD VIEW -->
+<div id="dashboardView" class="page-wrap" style="display:none;">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <h1 style="font-size:1.8rem;">Admin dashboard</h1>
+    <button class="btn btn-ghost" id="logoutBtn">Log out</button>
+  </div>
+
+  <div class="card" style="margin-top:24px;">
+    <h3 style="font-size:1.1rem;">Upload a border</h3>
+    <p style="font-size:0.9rem; margin-top:-6px;">
+      Upload a PNG sized for a photo strip (roughly 528×[strip height], with a
+      transparent center) — it becomes available for everyone to choose in
+      their room's results screen.
+    </p>
+    <label class="field-label" for="borderName">Border name</label>
+    <input type="text" id="borderName" placeholder="e.g. Gold Foil">
+    <label class="field-label" for="borderFile">PNG file</label>
+    <input type="file" id="borderFile" accept="image/png">
+    <button class="btn btn-primary" id="uploadBorderBtn" style="margin-top:10px;">Upload border</button>
+    <p class="status-line" id="borderUploadStatus"></p>
+  </div>
+
+  <h3 style="margin-top:36px;">All captured photos</h3>
+  <div class="admin-grid" id="photoGrid"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/admin.js"></script>
+
+</body>
+</html>
