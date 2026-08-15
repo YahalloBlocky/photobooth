@@ -59,7 +59,7 @@ async function loadPhotos() {
       const wrap = document.createElement('div');
       const date = data.createdAt ? data.createdAt.toDate().toLocaleString() : '';
       wrap.innerHTML = `
-        <img src="${data.url}" alt="Photo from room ${data.roomCode}">
+        <img src="${data.imageData}" alt="Photo from room ${data.roomCode}">
         <div class="meta">${data.roomCode} · ${date}</div>
       `;
       grid.appendChild(wrap);
@@ -71,6 +71,10 @@ async function loadPhotos() {
 }
 
 // ---------- Border upload ----------
+// Stored directly in Firestore as base64 (not Firebase Storage, which
+// now requires the paid Blaze plan). Firestore documents cap at 1MB,
+// so the uploaded file is re-encoded as a compressed JPEG-quality PNG
+// and rejected if still too large.
 document.getElementById('uploadBorderBtn').onclick = async () => {
   const nameInput = document.getElementById('borderName');
   const fileInput = document.getElementById('borderFile');
@@ -86,17 +90,25 @@ document.getElementById('uploadBorderBtn').onclick = async () => {
   }
 
   btn.disabled = true;
-  status.textContent = 'Uploading…';
+  status.textContent = 'Processing…';
 
   try {
-    const storagePath = `borders/${Date.now()}-${file.name}`;
-    const storageRef = storage.ref(storagePath);
-    await storageRef.put(file);
-    const url = await storageRef.getDownloadURL();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+    if (dataUrl.length > 900000) {
+      status.textContent = 'That file is too large (keep it under ~650KB). Try a smaller or more compressed PNG.';
+      btn.disabled = false;
+      return;
+    }
 
     await db.collection('borders').add({
       name,
-      url,
+      dataUrl,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 

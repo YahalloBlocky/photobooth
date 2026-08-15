@@ -244,9 +244,9 @@ async function loadBorderOptions() {
       const data = doc.data();
       const swatch = document.createElement('div');
       swatch.className = 'border-swatch';
-      swatch.innerHTML = `<img src="${data.url}" alt="${data.name || 'border'}">`;
+      swatch.innerHTML = `<img src="${data.dataUrl}" alt="${data.name || 'border'}">`;
       swatch.onclick = () => {
-        selectedBorder = { type: 'image', url: data.url };
+        selectedBorder = { type: 'image', dataUrl: data.dataUrl };
         [...container.children].forEach(c => c.classList.remove('selected'));
         swatch.classList.add('selected');
       };
@@ -310,12 +310,11 @@ function renderFinalStrip() {
       drawPhotos();
     } else if (selectedBorder.type === 'image') {
       const bImg = new Image();
-      bImg.crossOrigin = 'anonymous';
       bImg.onload = () => {
         ctx.drawImage(bImg, 0, 0, width, height);
         drawPhotos();
       };
-      bImg.src = selectedBorder.url;
+      bImg.src = selectedBorder.dataUrl;
     } else {
       ctx.fillStyle = '#FBF7EE';
       ctx.fillRect(0, 0, width, height);
@@ -332,28 +331,31 @@ document.getElementById('downloadBtn').onclick = async () => {
 
   try {
     const canvas = await renderFinalStrip();
-    const dataUrl = canvas.toDataURL('image/png');
 
-    // Trigger local download
+    // Full-quality PNG for the actual download the user keeps
+    const pngDataUrl = canvas.toDataURL('image/png');
     const link = document.createElement('a');
     link.download = `photobooth-${roomCode}.png`;
-    link.href = dataUrl;
+    link.href = pngDataUrl;
     link.click();
 
-    // Upload to Firebase Storage + record in Firestore for the admin gallery
-    const blob = await (await fetch(dataUrl)).blob();
-    const storagePath = `photos/${roomCode}/${Date.now()}.png`;
-    const storageRef = storage.ref(storagePath);
-    await storageRef.put(blob);
-    const url = await storageRef.getDownloadURL();
+    // Smaller, compressed JPEG for the Firestore gallery copy, since
+    // Firestore documents cap out at 1MB and a full-res PNG strip can
+    // easily exceed that. Firebase Storage would normally handle this,
+    // but it now requires the paid Blaze plan, so we keep this small
+    // enough to live directly in a Firestore document instead.
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.6);
 
-    await db.collection('photos').add({
-      roomCode,
-      url,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    resultsStatus.textContent = 'Saved and downloaded.';
+    if (jpegDataUrl.length > 700000) {
+      resultsStatus.textContent = 'Downloaded. Too large to save to the gallery, though — try fewer shots next time.';
+    } else {
+      await db.collection('photos').add({
+        roomCode,
+        imageData: jpegDataUrl,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      resultsStatus.textContent = 'Saved and downloaded.';
+    }
   } catch (err) {
     console.error(err);
     resultsStatus.textContent = 'Downloaded, but saving to the gallery failed.';
@@ -367,4 +369,24 @@ document.getElementById('retakeBtn').onclick = async () => {
   if (!isHost) return;
   capturedShots = [];
   await roomRef.set({ status: 'lobby', currentShot: 0 }, { merge: true });
+};
+
+// ---------- Leave room ----------
+document.getElementById('leaveBtn').onclick = async () => {
+  const btn = document.getElementById('leaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Leaving…';
+
+  try {
+    await mesh.leave();
+
+    const remaining = await roomRef.collection('participants').get();
+    if (remaining.empty) {
+      await deepDeleteRoom(roomCode);
+    }
+  } catch (err) {
+    console.warn('Error while leaving room:', err);
+  } finally {
+    window.location.href = 'index.html';
+  }
 };

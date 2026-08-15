@@ -2,6 +2,9 @@ function randomRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// Quietly clean up old rooms in the background (throttled to once/hour)
+sweepOldRooms();
+
 // ---------- CREATE ROOM ----------
 document.getElementById('createBtn').onclick = async () => {
   const btn = document.getElementById('createBtn');

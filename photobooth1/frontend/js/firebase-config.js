@@ -12,4 +12,6 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const storage = firebase.storage();
+// Note: not using Firebase Storage — as of Feb 2026 it requires the paid
+// Blaze plan. Images are instead compressed and stored directly in
+// Firestore documents as base64 data.
