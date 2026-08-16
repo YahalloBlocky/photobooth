@@ -21,6 +21,15 @@ let shotCount = 4;
 let capturedShots = [];
 let lastHandledShotIndex = -1;
 let selectedBorder = { type: 'builtin', id: 'flower' };
+let guestsCanEdit = false;
+
+// Persists across preview re-renders and editor sessions: per-shot crop
+// windows, ink strokes, text/photo objects, and any custom uploaded frame.
+let editState = { shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+
+function resetEditState() {
+  editState = { shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+}
 
 // ---------- Shot selector ----------
 const shotSelector = document.getElementById('shotSelector');
@@ -41,6 +50,33 @@ function updateShotSelectorUI() {
   [...shotSelector.children].forEach(btn => {
     btn.classList.toggle('selected', Number(btn.dataset.count) === shotCount);
   });
+}
+
+// ---------- Host: allow guests to edit ----------
+const guestEditToggleWrap = document.getElementById('guestEditToggleWrap');
+const guestEditToggle = document.getElementById('guestEditToggle');
+if (isHost) {
+  guestEditToggleWrap.style.display = 'block';
+  guestEditToggle.onclick = async () => {
+    await roomRef.set({ guestsCanEdit: !guestsCanEdit }, { merge: true });
+  };
+}
+
+function canEdit() {
+  return isHost || guestsCanEdit;
+}
+
+function updateEditButtonState() {
+  const btn = document.getElementById('openEditorBtn');
+  const hint = document.getElementById('editPermissionHint');
+  if (!btn) return;
+  if (canEdit()) {
+    btn.disabled = false;
+    hint.textContent = 'Reposition photos, draw, add text or images, or upload your own frame.';
+  } else {
+    btn.disabled = true;
+    hint.textContent = 'Only the host can edit right now.';
+  }
 }
 
 // ---------- Mic ----------
@@ -121,6 +157,11 @@ roomRef.onSnapshot((snap) => {
   shotCount = data.shotCount || 4;
   updateShotSelectorUI();
 
+  guestsCanEdit = !!data.guestsCanEdit;
+  guestEditToggle.textContent = guestsCanEdit ? 'On' : 'Off';
+  guestEditToggle.classList.toggle('selected', guestsCanEdit);
+  updateEditButtonState();
+
   if (data.status === 'countdown' && data.currentShot !== lastHandledShotIndex) {
     lastHandledShotIndex = data.currentShot;
     runCountdownAndCapture(data.currentShot);
@@ -133,6 +174,7 @@ roomRef.onSnapshot((snap) => {
   if (data.status === 'lobby') {
     lastHandledShotIndex = -1;
     capturedShots = [];
+    resetEditState();
     document.getElementById('roomView').style.display = 'block';
     document.getElementById('resultsView').style.display = 'none';
   }
@@ -192,29 +234,29 @@ function runCountdownAndCapture(shotIndex) {
 
 // Mimics CSS object-fit: cover -- crops the source to match the
 // destination's aspect ratio instead of stretching/distorting it.
-// Works for both <video> (videoWidth/videoHeight) and <img>/canvas
-// (naturalWidth/naturalHeight or width/height) sources.
 function getCoverCropDims(srcW, srcH, destW, destH) {
   if (!srcW || !srcH) return null;
   const srcAspect = srcW / srcH;
   const destAspect = destW / destH;
   let sx, sy, sw, sh;
   if (srcAspect > destAspect) {
-    sh = srcH;
-    sw = srcH * destAspect;
-    sx = (srcW - sw) / 2;
-    sy = 0;
+    sh = srcH; sw = srcH * destAspect; sx = (srcW - sw) / 2; sy = 0;
   } else {
-    sw = srcW;
-    sh = srcW / destAspect;
-    sx = 0;
-    sy = (srcH - sh) / 2;
+    sw = srcW; sh = srcW / destAspect; sx = 0; sy = (srcH - sh) / 2;
   }
   return { sx, sy, sw, sh };
 }
 
 function getCoverCrop(video, destW, destH) {
   return getCoverCropDims(video.videoWidth, video.videoHeight, destW, destH);
+}
+
+function loadImage(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.src = src;
+  });
 }
 
 function buildCompositeFrame() {
@@ -242,7 +284,6 @@ function buildCompositeFrame() {
 
     ctx.save();
     if (tile.classList.contains('local')) {
-      // Flip to match the mirrored preview the user actually saw
       ctx.translate(x + cellW, y);
       ctx.scale(-1, 1);
       ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cellW, cellH);
@@ -259,10 +300,7 @@ function captureFrame() {
   capturedShots.push(buildCompositeFrame());
 }
 
-// ---------- Results ----------
-// Three themed default borders. Each adapts to the actual strip height
-// (which varies by shot count) by scattering its motif proportionally,
-// rather than needing a separately hand-made design per shot count.
+// ---------- Frames (default themed + admin-uploaded) ----------
 const THEMED_BORDERS = [
   {
     id: 'flower',
@@ -294,8 +332,6 @@ function drawThemedBorder(theme, ctx, width, height) {
   ctx.lineWidth = 3;
   ctx.strokeRect(9, 9, width - 18, height - 18);
 
-  // Scatter the theme's motif down both margins, spacing based on
-  // available height so it naturally adapts to any shot count.
   const topMargin = 34, bottomMargin = 54;
   const usableHeight = height - topMargin - bottomMargin;
   const spacing = 64;
@@ -315,89 +351,88 @@ function drawThemedBorder(theme, ctx, width, height) {
   ctx.fillText('PHOTOGETHER', width / 2, height - 24);
 }
 
+async function getFrameRenderer() {
+  if (selectedBorder.type === 'builtin') {
+    const theme = THEMED_BORDERS.find(x => x.id === selectedBorder.id);
+    return (ctx, w, h) => drawThemedBorder(theme, ctx, w, h);
+  }
+  if (selectedBorder.type === 'image') {
+    const img = await loadImage(selectedBorder.dataUrl);
+    return (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h);
+  }
+  return (ctx, w, h) => { ctx.fillStyle = '#FBF7EE'; ctx.fillRect(0, 0, w, h); };
+}
+
+function stripLayout(count) {
+  const padding = 24, photoW = 480, photoH = 360, gap = 14;
+  const width = photoW + padding * 2;
+  const height = padding * 2 + count * photoH + (count - 1) * gap + 40;
+  const shotRects = [];
+  for (let i = 0; i < count; i++) {
+    shotRects.push({ x: padding, y: padding + i * (photoH + gap), w: photoW, h: photoH });
+  }
+  return { width, height, padding, photoW, photoH, gap, shotRects };
+}
+
+// ---------- Results ----------
 async function showResults() {
   document.getElementById('roomView').style.display = 'none';
   document.getElementById('resultsView').style.display = 'block';
 
-  renderShotThumbnails();
   await loadBorderOptions();
   await updatePreview();
-}
-
-function renderShotThumbnails() {
-  let thumbWrap = document.getElementById('shotThumbs');
-  if (!thumbWrap) {
-    thumbWrap = document.createElement('div');
-    thumbWrap.id = 'shotThumbs';
-    thumbWrap.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; max-width:260px;';
-    document.getElementById('filmstrip').insertAdjacentElement('beforebegin', thumbWrap);
-  }
-  thumbWrap.innerHTML = '';
-  capturedShots.forEach((src, i) => {
-    const thumb = document.createElement('div');
-    thumb.className = 'shot-thumb';
-    thumb.style.width = '76px';
-    thumb.innerHTML = `<img src="${src}" alt="Shot ${i + 1}"><span class="edit-tag">Edit</span>`;
-    thumb.onclick = () => openShotEditor(i);
-    thumbWrap.appendChild(thumb);
-  });
-}
-
-function openShotEditor(index) {
-  PhotoEditor.open({
-    imageSrc: capturedShots[index],
-    width: 480,
-    height: 360,
-    onSave: (newDataUrl) => {
-      capturedShots[index] = newDataUrl;
-      renderShotThumbnails();
-      updatePreview();
-    },
-    onRetake: async () => {
-      const fresh = buildCompositeFrame();
-      capturedShots[index] = fresh;
-      renderShotThumbnails();
-      updatePreview();
-      return fresh;
-    }
-  });
+  updateEditButtonState();
 }
 
 async function loadBorderOptions() {
   const container = document.getElementById('borderOptions');
   container.innerHTML = '';
 
+  const makeSwatchWrap = (labelText) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:5px;';
+    const label = document.createElement('span');
+    label.textContent = labelText;
+    label.style.cssText = 'font-size:0.72rem; color:var(--ink-soft); text-align:center;';
+    return { wrap, label };
+  };
+
   THEMED_BORDERS.forEach(b => {
+    const { wrap, label } = makeSwatchWrap(b.label);
     const swatch = document.createElement('div');
     swatch.className = 'border-swatch' + (selectedBorder.type === 'builtin' && selectedBorder.id === b.id ? ' selected' : '');
     swatch.style.background = b.swatchBg;
-    swatch.title = b.label;
     swatch.onclick = () => {
       selectedBorder = { type: 'builtin', id: b.id };
-      [...container.children].forEach(c => c.classList.remove('selected'));
+      [...container.children].forEach(c => c.querySelector('.border-swatch').classList.remove('selected'));
       swatch.classList.add('selected');
       updatePreview();
     };
-    container.appendChild(swatch);
+    wrap.appendChild(swatch);
+    wrap.appendChild(label);
+    container.appendChild(wrap);
   });
 
   try {
     const bordersSnap = await db.collection('borders').where('shotCount', '==', shotCount).get();
     bordersSnap.forEach(doc => {
       const data = doc.data();
+      const { wrap, label } = makeSwatchWrap(data.name || 'Frame');
       const swatch = document.createElement('div');
       swatch.className = 'border-swatch';
-      swatch.innerHTML = `<img src="${data.dataUrl}" alt="${data.name || 'border'}">`;
+      swatch.innerHTML = `<img src="${data.dataUrl}" alt="${data.name || 'frame'}">`;
       swatch.onclick = () => {
         selectedBorder = { type: 'image', dataUrl: data.dataUrl };
-        [...container.children].forEach(c => c.classList.remove('selected'));
+        [...container.children].forEach(c => c.querySelector('.border-swatch').classList.remove('selected'));
         swatch.classList.add('selected');
         updatePreview();
       };
-      container.appendChild(swatch);
+      wrap.appendChild(swatch);
+      wrap.appendChild(label);
+      container.appendChild(wrap);
     });
   } catch (e) {
-    console.warn('Could not load admin borders', e);
+    console.warn('Could not load frames', e);
   }
 }
 
@@ -406,58 +441,98 @@ async function updatePreview() {
   document.getElementById('previewImg').src = canvas.toDataURL('image/png');
 }
 
-function renderFinalStrip() {
-  return new Promise(async (resolve) => {
-    await document.fonts.ready;
+// Renders the full strip -- frame, per-shot crops, ink layer, and any
+// text/photo objects -- reflecting whatever was last saved in the editor.
+async function renderFinalStrip() {
+  await document.fonts.ready;
 
-    const canvas = document.getElementById('stripCanvas');
-    const ctx = canvas.getContext('2d');
-    const padding = 24;
-    const photoW = 480, photoH = 360;
-    const gap = 14;
-    const width = photoW + padding * 2;
-    const height = padding * 2 + capturedShots.length * photoH + (capturedShots.length - 1) * gap + 40;
+  const layout = stripLayout(capturedShots.length);
+  const canvas = document.getElementById('stripCanvas');
+  canvas.width = layout.width;
+  canvas.height = layout.height;
+  const ctx = canvas.getContext('2d');
 
-    canvas.width = width;
-    canvas.height = height;
+  if (editState.customFrameSrc) {
+    const cf = await loadImage(editState.customFrameSrc);
+    ctx.drawImage(cf, 0, 0, layout.width, layout.height);
+  } else {
+    const renderer = await getFrameRenderer();
+    renderer(ctx, layout.width, layout.height);
+  }
 
-    const drawPhotos = () => {
-      if (capturedShots.length === 0) { resolve(canvas); return; }
-      capturedShots.forEach((src, i) => {
-        const img = new Image();
-        img.onload = () => {
-          const y = padding + i * (photoH + gap);
-          // Crop to fit the slot instead of stretching -- fixes the warp.
-          const crop = getCoverCropDims(img.naturalWidth, img.naturalHeight, photoW, photoH);
-          if (crop) {
-            ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, padding, y, photoW, photoH);
-          } else {
-            ctx.drawImage(img, padding, y, photoW, photoH);
-          }
-          if (i === capturedShots.length - 1) resolve(canvas);
-        };
-        img.src = src;
-      });
-    };
+  if (capturedShots.length > 0) {
+    const shotImgs = await Promise.all(capturedShots.map(loadImage));
+    shotImgs.forEach((img, i) => {
+      const rect = layout.shotRects[i];
+      let crop = editState.shotCrops && editState.shotCrops[i];
+      if (!crop) {
+        const c = getCoverCropDims(img.naturalWidth, img.naturalHeight, rect.w, rect.h);
+        crop = { x: c.sx, y: c.sy, w: c.sw, h: c.sh };
+      }
+      ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, rect.x, rect.y, rect.w, rect.h);
+    });
+  }
 
-    if (selectedBorder.type === 'builtin') {
-      const theme = THEMED_BORDERS.find(x => x.id === selectedBorder.id);
-      drawThemedBorder(theme, ctx, width, height);
-      drawPhotos();
-    } else if (selectedBorder.type === 'image') {
-      const bImg = new Image();
-      bImg.onload = () => {
-        ctx.drawImage(bImg, 0, 0, width, height);
-        drawPhotos();
-      };
-      bImg.src = selectedBorder.dataUrl;
-    } else {
-      ctx.fillStyle = '#FBF7EE';
-      ctx.fillRect(0, 0, width, height);
-      drawPhotos();
+  if (editState.actions && editState.actions.length) {
+    const inkCanvas = document.createElement('canvas');
+    inkCanvas.width = layout.width;
+    inkCanvas.height = layout.height;
+    const inkCtx = inkCanvas.getContext('2d');
+    editState.actions.forEach(a => {
+      inkCtx.save();
+      inkCtx.globalCompositeOperation = a.type === 'erase' ? 'destination-out' : 'source-over';
+      inkCtx.strokeStyle = a.color;
+      inkCtx.lineWidth = a.size;
+      inkCtx.lineCap = 'round';
+      inkCtx.lineJoin = 'round';
+      inkCtx.beginPath();
+      a.points.forEach((p, idx) => { if (idx === 0) inkCtx.moveTo(p.x, p.y); else inkCtx.lineTo(p.x, p.y); });
+      inkCtx.stroke();
+      inkCtx.restore();
+    });
+    ctx.drawImage(inkCanvas, 0, 0);
+  }
+
+  if (editState.objects && editState.objects.length) {
+    for (const o of editState.objects) {
+      if (o.type === 'text') {
+        ctx.fillStyle = o.color;
+        ctx.font = `600 ${o.h}px ${o.font}`;
+        ctx.textBaseline = 'top';
+        ctx.fillText(o.text, o.x, o.y);
+      } else if (o.type === 'image' && o.imgSrc) {
+        const img = await loadImage(o.imgSrc);
+        ctx.drawImage(img, o.x, o.y, o.w, o.h);
+      }
+    }
+  }
+
+  return canvas;
+}
+
+// ---------- Editor ----------
+document.getElementById('openEditorBtn').onclick = async () => {
+  if (!canEdit()) {
+    await UIDialog.alert('The host hasn\'t allowed guests to edit yet.');
+    return;
+  }
+
+  const layout = stripLayout(capturedShots.length);
+  const frameRenderer = await getFrameRenderer();
+
+  PhotoEditor.openStrip({
+    shots: capturedShots,
+    shotRects: layout.shotRects,
+    width: layout.width,
+    height: layout.height,
+    frameRenderer,
+    initialState: editState,
+    onSave: (result) => {
+      editState = result.state;
+      document.getElementById('previewImg').src = result.dataUrl;
     }
   });
-}
+};
 
 document.getElementById('downloadBtn').onclick = async () => {
   const btn = document.getElementById('downloadBtn');
@@ -468,18 +543,14 @@ document.getElementById('downloadBtn').onclick = async () => {
   try {
     const canvas = await renderFinalStrip();
 
-    // Full-quality PNG for the actual download the user keeps
     const pngDataUrl = canvas.toDataURL('image/png');
     const link = document.createElement('a');
-    link.download = `photobooth-${roomCode}.png`;
+    link.download = `photogether-${roomCode}.png`;
     link.href = pngDataUrl;
     link.click();
 
     // Smaller, compressed JPEG for the Firestore gallery copy, since
-    // Firestore documents cap out at 1MB and a full-res PNG strip can
-    // easily exceed that. Firebase Storage would normally handle this,
-    // but it now requires the paid Blaze plan, so we keep this small
-    // enough to live directly in a Firestore document instead.
+    // Firestore documents cap out at 1MB.
     const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.6);
 
     if (jpegDataUrl.length > 700000) {
@@ -504,6 +575,7 @@ document.getElementById('downloadBtn').onclick = async () => {
 document.getElementById('retakeBtn').onclick = async () => {
   if (!isHost) return;
   capturedShots = [];
+  resetEditState();
   await roomRef.set({ status: 'lobby', currentShot: 0 }, { merge: true });
 };
 

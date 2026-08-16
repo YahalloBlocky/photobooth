@@ -5,13 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin — Photogether</title>
 <link rel="stylesheet" href="css/style.css">
-   <link rel="icon" type="image/png" href="photogetherlogo.png" />
 </head>
 <body>
 
 <header class="navbar">
   <a href="index.html" class="brand">
-    <span class="logo-placeholder" aria-hidden="true">PG</span>
+    <img src="photogetherlogo.png" alt="Photogether logo" class="logo-img">
     Photogether
   </a>
   <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
@@ -44,9 +43,9 @@
   </div>
 
   <div class="card" style="margin-top:24px;">
-    <h3 style="font-size:1.1rem;">Upload a border</h3>
+    <h3 style="font-size:1.1rem;">Upload a frame</h3>
     <p style="font-size:0.9rem; margin-top:-6px;">
-      Borders are tied to a specific shot count, since the strip height is
+      Frames are tied to a specific shot count, since the strip height is
       different for each. Upload a PNG (transparent center) sized to match.
       Keep the file under ~650KB.
     </p>
@@ -54,7 +53,7 @@
     <label class="field-label" for="borderShotCount">For shot count</label>
     <div class="shot-selector" id="borderShotCountSelector"></div>
 
-    <label class="field-label" for="borderName" style="margin-top:14px;">Border name</label>
+    <label class="field-label" for="borderName" style="margin-top:14px;">Frame name</label>
     <input type="text" id="borderName" placeholder="e.g. Gold Foil">
     <label class="field-label" for="borderFile">PNG file</label>
     <input type="file" id="borderFile" accept="image/png">
@@ -66,11 +65,11 @@
       </div>
     </div>
 
-    <button class="btn btn-primary" id="uploadBorderBtn" style="margin-top:10px;">Upload border</button>
+    <button class="btn btn-primary" id="uploadBorderBtn" style="margin-top:10px;">Upload frame</button>
     <p class="status-line" id="borderUploadStatus"></p>
   </div>
 
-  <h3 style="margin-top:36px;">Uploaded borders</h3>
+  <h3 style="margin-top:36px;">Uploaded frames</h3>
   <div class="admin-grid" id="borderGrid"></div>
 
   <h3 style="margin-top:36px;">All captured photos</h3>
@@ -81,18 +80,34 @@
 <div class="editor-overlay" id="editorOverlay">
   <div class="editor-modal">
     <div class="editor-toolbar" id="editorToolbar">
-      <button class="tool-btn selected" data-tool="move">✋ Move</button>
+      <button class="tool-btn selected" data-tool="move" title="Drag to reposition/crop">✋ Move</button>
       <button class="tool-btn" data-tool="draw">✏️ Draw</button>
       <button class="tool-btn" data-tool="erase">🧽 Erase</button>
-      <button class="tool-btn" data-tool="text">🔤 Text</button>
-      <button class="tool-btn" data-tool="sticker">✨ Sticker</button>
+      <button class="tool-btn" data-tool="text">🔤 Add text</button>
+      <button class="tool-btn" data-tool="photo">🖼️ Add photo</button>
+      <span style="flex:1;"></span>
+      <button class="tool-btn" id="editorUndoBtn" title="Undo">↩ Undo</button>
+      <button class="tool-btn" id="editorRedoBtn" title="Redo">↪ Redo</button>
+      <button class="tool-btn" id="editorResetBtn" title="Reset everything">Reset</button>
     </div>
-
-    <div class="sticker-row" id="stickerRow" style="display:none;"></div>
 
     <div class="editor-controls-row">
       <label>Color <input type="color" id="editorColor" value="#a5502e"></label>
-      <label>Size <input type="range" id="editorSize" min="2" max="40" value="6"></label>
+      <label>Size <input type="range" id="editorSize" min="2" max="60" value="6"></label>
+      <label id="editorFontWrap">Font
+        <select id="editorFont">
+          <option value="'Work Sans', sans-serif">Work Sans</option>
+          <option value="'Fraunces', serif">Fraunces</option>
+          <option value="'IBM Plex Mono', monospace">Plex Mono</option>
+          <option value="Georgia, serif">Georgia</option>
+          <option value="'Comic Sans MS', cursive">Comic Sans</option>
+        </select>
+      </label>
+      <button class="tool-btn" id="editorDeleteBtn" style="display:none;">🗑️ Delete selected</button>
+      <label class="tool-btn" id="editorFrameUploadLabel" style="cursor:pointer;">
+        Upload custom frame
+        <input type="file" id="editorFrameUpload" accept="image/png" style="display:none;">
+      </label>
     </div>
 
     <div class="editor-canvas-wrap">
@@ -100,7 +115,7 @@
     </div>
 
     <div class="editor-footer">
-      <button class="btn btn-ghost" id="editorRetakeBtn">Retake shot</button>
+      <span></span>
       <div class="button-row">
         <button class="btn btn-ghost" id="editorCancelBtn">Cancel</button>
         <button class="btn btn-primary" id="editorSaveBtn">Save</button>
@@ -109,9 +124,12 @@
   </div>
 </div>
 
+<canvas id="inkLayerCanvas" style="display:none;"></canvas>
+
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="js/firebase-config.js"></script>
+<script src="js/ui-dialogs.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/admin.js"></script>
 <script src="js/nav.js"></script>

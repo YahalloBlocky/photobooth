@@ -80,12 +80,12 @@ async function loadPhotos() {
       wrap.querySelector('[data-action="edit"]').onclick = () => {
         const img = new Image();
         img.onload = () => {
-          PhotoEditor.open({
+          PhotoEditor.openFlat({
             imageSrc: data.imageData,
             width: img.naturalWidth,
             height: img.naturalHeight,
-            onSave: async (newDataUrl) => {
-              await db.collection('photos').doc(doc.id).set({ imageData: newDataUrl }, { merge: true });
+            onSave: async ({ dataUrl }) => {
+              await db.collection('photos').doc(doc.id).set({ imageData: dataUrl }, { merge: true });
               loadPhotos();
             }
           });
@@ -94,7 +94,8 @@ async function loadPhotos() {
       };
 
       wrap.querySelector('[data-action="remove"]').onclick = async () => {
-        if (!confirm('Remove this photo?')) return;
+        const ok = await UIDialog.confirm('Remove this photo? This can\'t be undone.');
+        if (!ok) return;
         await db.collection('photos').doc(doc.id).delete();
         loadPhotos();
       };
@@ -192,7 +193,7 @@ document.getElementById('uploadBorderBtn').onclick = async () => {
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    status.textContent = 'Border uploaded.';
+    status.textContent = 'Frame uploaded.';
     nameInput.value = '';
     document.getElementById('borderFile').value = '';
     pendingBorderDataUrl = null;
@@ -216,7 +217,7 @@ async function loadBorders() {
     grid.innerHTML = '';
 
     if (snap.empty) {
-      grid.innerHTML = '<p>No custom borders uploaded yet.</p>';
+      grid.innerHTML = '<p>No custom frames uploaded yet.</p>';
       return;
     }
 
@@ -233,14 +234,15 @@ async function loadBorders() {
       `;
 
       wrap.querySelector('[data-action="rename"]').onclick = async () => {
-        const newName = prompt('New name for this border:', data.name);
+        const newName = await UIDialog.prompt('New name for this frame:', data.name);
         if (!newName) return;
         await db.collection('borders').doc(doc.id).set({ name: newName }, { merge: true });
         loadBorders();
       };
 
       wrap.querySelector('[data-action="remove"]').onclick = async () => {
-        if (!confirm('Remove this border?')) return;
+        const ok = await UIDialog.confirm('Remove this frame? This can\'t be undone.');
+        if (!ok) return;
         await db.collection('borders').doc(doc.id).delete();
         loadBorders();
       };
@@ -249,6 +251,6 @@ async function loadBorders() {
     });
   } catch (err) {
     console.error(err);
-    grid.innerHTML = '<p>Could not load borders.</p>';
+    grid.innerHTML = '<p>Could not load frames.</p>';
   }
 }

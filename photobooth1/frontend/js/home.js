@@ -30,7 +30,7 @@ document.getElementById('createBtn').onclick = async () => {
     console.error(err);
     btn.disabled = false;
     btn.textContent = 'Create Room';
-    alert('Could not create room. Check your connection and try again.');
+    await UIDialog.alert('Could not create room. Check your connection and try again.');
   }
 };
 
