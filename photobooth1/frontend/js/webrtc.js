@@ -40,27 +40,31 @@ class MeshRoom {
     this.onRemoteStream = onRemoteStream || (() => {});
     this.onRemoteLeave = onRemoteLeave || (() => {});
     this.localStream = null;
+    this.hasAudio = false;
     this.peerConnections = {}; // otherId -> RTCPeerConnection
     this.knownParticipants = new Set();
     this.roomRef = db.collection('rooms').doc(roomCode);
+    this._lastSeenRenegotiate = {};
   }
 
   async init() {
+    // Video only on join -- some people will only ever grant camera access,
+    // and requesting audio+video together means a mic denial blocks the
+    // whole join. Mic is requested separately later via enableMic().
     this.localStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'user',
         width: { ideal: 640 },
         height: { ideal: 480 },
         aspectRatio: { ideal: 4 / 3 }
-      },
-      audio: true
+      }
     });
 
     await this.roomRef.collection('participants').doc(this.myPeerId).set({
       joinedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    // Watch for other participants joining/leaving
+    // Watch for other participants joining/leaving/renegotiating
     this.roomRef.collection('participants').onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const otherId = change.doc.id;
@@ -73,6 +77,13 @@ class MeshRoom {
         if (change.type === 'removed') {
           this.knownParticipants.delete(otherId);
           this.disconnectFrom(otherId);
+        }
+        if (change.type === 'modified' && this.knownParticipants.has(otherId)) {
+          const data = change.doc.data();
+          if (data.renegotiateRequest && data.renegotiateRequest !== this._lastSeenRenegotiate[otherId]) {
+            this._lastSeenRenegotiate[otherId] = data.renegotiateRequest;
+            this.rebuildConnection(otherId);
+          }
         }
       });
     });
@@ -170,6 +181,56 @@ class MeshRoom {
   setMicEnabled(enabled) {
     if (!this.localStream) return;
     this.localStream.getAudioTracks().forEach(t => { t.enabled = enabled; });
+  }
+
+  // Requests microphone access separately (called when the user taps the
+  // mic button). If granted, adds the track locally and tells every
+  // connected peer to rebuild the connection so it gets included.
+  async enableMic() {
+    if (this.hasAudio) {
+      this.setMicEnabled(true);
+      return true;
+    }
+
+    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioTrack = audioStream.getAudioTracks()[0];
+    this.localStream.addTrack(audioTrack);
+    this.hasAudio = true;
+
+    // Tell other peers (and ourselves, symmetrically) that this connection
+    // needs to be rebuilt to carry the new track.
+    await this.roomRef.collection('participants').doc(this.myPeerId).set({
+      renegotiateRequest: Date.now()
+    }, { merge: true });
+
+    const peers = Object.keys(this.peerConnections);
+    for (const otherId of peers) {
+      await this.rebuildConnection(otherId);
+    }
+    return true;
+  }
+
+  // Tears down and re-does the handshake for one connection. Used when a
+  // track gets added mid-call (e.g. mic enabled), since renegotiating an
+  // existing WebRTC connection reliably is complex -- redoing the whole
+  // handshake is simpler and good enough for a small group call.
+  async rebuildConnection(otherId) {
+    this.disconnectFrom(otherId);
+
+    const connRef = this.roomRef.collection('connections').doc(this.pairKey(otherId));
+    try {
+      const offerCandSnap = await connRef.collection('offerCandidates').get();
+      await Promise.all(offerCandSnap.docs.map(d => d.ref.delete()));
+      const answerCandSnap = await connRef.collection('answerCandidates').get();
+      await Promise.all(answerCandSnap.docs.map(d => d.ref.delete()));
+      await connRef.set({
+        offer: firebase.firestore.FieldValue.delete(),
+        answer: firebase.firestore.FieldValue.delete()
+      }, { merge: true });
+    } catch (e) { /* best effort */ }
+
+    this.knownParticipants.add(otherId);
+    await this.connectTo(otherId);
   }
 
   async leave() {

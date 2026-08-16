@@ -3,14 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin — LDR Photobooth</title>
+<title>Admin — Photogether</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <header class="navbar">
-  <a href="index.html" class="brand">📸 Together Booth</a>
-  <nav>
+  <a href="index.html" class="brand">
+    <span class="logo-placeholder" aria-hidden="true">PG</span>
+    Photogether
+  </a>
+  <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
+  <nav id="mainNav">
     <a href="index.html">Home</a>
     <a href="about.html">About</a>
     <a href="contact.html">Contact</a>
@@ -41,26 +45,75 @@
   <div class="card" style="margin-top:24px;">
     <h3 style="font-size:1.1rem;">Upload a border</h3>
     <p style="font-size:0.9rem; margin-top:-6px;">
-      Upload a PNG sized for a photo strip (roughly 528×[strip height], with a
-      transparent center) — it becomes available for everyone to choose in
-      their room's results screen. Keep the file under ~650KB.
+      Borders are tied to a specific shot count, since the strip height is
+      different for each. Upload a PNG (transparent center) sized to match.
+      Keep the file under ~650KB.
     </p>
-    <label class="field-label" for="borderName">Border name</label>
+
+    <label class="field-label" for="borderShotCount">For shot count</label>
+    <div class="shot-selector" id="borderShotCountSelector"></div>
+
+    <label class="field-label" for="borderName" style="margin-top:14px;">Border name</label>
     <input type="text" id="borderName" placeholder="e.g. Gold Foil">
     <label class="field-label" for="borderFile">PNG file</label>
     <input type="file" id="borderFile" accept="image/png">
+
+    <div id="borderPreviewWrap" style="display:none; margin: 14px 0;">
+      <label class="field-label">Preview</label>
+      <div class="editor-canvas-wrap" style="justify-content:flex-start;">
+        <canvas id="borderPreviewCanvas"></canvas>
+      </div>
+    </div>
+
     <button class="btn btn-primary" id="uploadBorderBtn" style="margin-top:10px;">Upload border</button>
     <p class="status-line" id="borderUploadStatus"></p>
   </div>
+
+  <h3 style="margin-top:36px;">Uploaded borders</h3>
+  <div class="admin-grid" id="borderGrid"></div>
 
   <h3 style="margin-top:36px;">All captured photos</h3>
   <div class="admin-grid" id="photoGrid"></div>
 </div>
 
+<!-- Reusable photo editor modal (also used by room.js) -->
+<div class="editor-overlay" id="editorOverlay">
+  <div class="editor-modal">
+    <div class="editor-toolbar" id="editorToolbar">
+      <button class="tool-btn selected" data-tool="move">✋ Move</button>
+      <button class="tool-btn" data-tool="draw">✏️ Draw</button>
+      <button class="tool-btn" data-tool="erase">🧽 Erase</button>
+      <button class="tool-btn" data-tool="text">🔤 Text</button>
+      <button class="tool-btn" data-tool="sticker">✨ Sticker</button>
+    </div>
+
+    <div class="sticker-row" id="stickerRow" style="display:none;"></div>
+
+    <div class="editor-controls-row">
+      <label>Color <input type="color" id="editorColor" value="#a5502e"></label>
+      <label>Size <input type="range" id="editorSize" min="2" max="40" value="6"></label>
+    </div>
+
+    <div class="editor-canvas-wrap">
+      <canvas id="editorCanvas"></canvas>
+    </div>
+
+    <div class="editor-footer">
+      <button class="btn btn-ghost" id="editorRetakeBtn">Retake shot</button>
+      <div class="button-row">
+        <button class="btn btn-ghost" id="editorCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="editorSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="js/firebase-config.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/admin.js"></script>
+<script src="js/nav.js"></script>
 
 </body>
 </html>

@@ -3,14 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LDR Photobooth</title>
+<title>Photogether</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <header class="navbar">
-  <a href="index.html" class="brand">📸 Together Booth</a>
-  <nav>
+  <a href="index.html" class="brand">
+    <span class="logo-placeholder" aria-hidden="true">PG</span>
+    Photogether
+  </a>
+  <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
+  <nav id="mainNav">
     <a href="index.html">Home</a>
     <a href="about.html">About</a>
     <a href="contact.html">Contact</a>
@@ -20,7 +24,7 @@
 
 <section class="hero">
   <h1>A photobooth for two places at once.</h1>
-  <p>Create a room, send the code to someone far away, and take photos together — live, side by side — no matter where you both are.</p>
+  <p>Photogether lets you create a room, send the code to someone far away, and take photos together — live, side by side — no matter where you both are.</p>
   <div class="button-row">
     <button class="btn btn-primary" id="createBtn">Create Room</button>
     <button class="btn btn-secondary" id="joinOpenBtn">Join Room</button>
@@ -45,6 +49,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/cleanup.js"></script>
 <script src="js/home.js"></script>
+<script src="js/nav.js"></script>
 
 </body>
 </html>

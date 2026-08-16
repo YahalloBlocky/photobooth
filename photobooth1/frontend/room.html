@@ -3,14 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room — LDR Photobooth</title>
+<title>Room — Photogether</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
 <header class="navbar">
-  <a href="index.html" class="brand">📸 Together Booth</a>
-  <nav>
+  <a href="index.html" class="brand">
+    <span class="logo-placeholder" aria-hidden="true">PG</span>
+    Photogether
+  </a>
+  <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
+  <nav id="mainNav">
     <a href="index.html">Home</a>
     <a href="about.html">About</a>
     <a href="contact.html">Contact</a>
@@ -52,8 +56,8 @@
       </div>
 
       <div class="mic-row">
-        <button class="btn-icon active" id="micBtn" title="Toggle microphone">🎤</button>
-        <span id="micStatus">Mic on</span>
+        <button class="btn-icon" id="micBtn" title="Enable microphone">🎙️</button>
+        <span id="micStatus">Tap to enable mic</span>
       </div>
 
       <button class="btn btn-primary" id="startBtn" style="width:100%;">Start</button>
@@ -67,7 +71,7 @@
 <div id="resultsView" style="display:none;">
   <div class="results-wrap">
     <div>
-      <div class="filmstrip">
+      <div class="filmstrip" id="filmstrip">
         <img id="previewImg" alt="Your photo strip preview">
       </div>
       <div class="button-row" style="margin-top:20px;">
@@ -79,9 +83,8 @@
 
     <div class="card border-panel">
       <h3 style="font-size:1.1rem;">Choose a border</h3>
+      <p style="font-size:0.85rem; margin-top:-6px;">Tap a shot on the left to move, draw, add stickers/text, or retake it.</p>
       <div class="border-options" id="borderOptions"></div>
-      <label class="field-label" for="customBorderInput">Or upload your own</label>
-      <input type="file" id="customBorderInput" accept="image/png">
     </div>
   </div>
 </div>
@@ -89,12 +92,46 @@
 <canvas id="captureCanvas" style="display:none;"></canvas>
 <canvas id="stripCanvas" style="display:none;"></canvas>
 
+<!-- Photo editor modal -->
+<div class="editor-overlay" id="editorOverlay">
+  <div class="editor-modal">
+    <div class="editor-toolbar" id="editorToolbar">
+      <button class="tool-btn selected" data-tool="move">✋ Move</button>
+      <button class="tool-btn" data-tool="draw">✏️ Draw</button>
+      <button class="tool-btn" data-tool="erase">🧽 Erase</button>
+      <button class="tool-btn" data-tool="text">🔤 Text</button>
+      <button class="tool-btn" data-tool="sticker">✨ Sticker</button>
+    </div>
+
+    <div class="sticker-row" id="stickerRow" style="display:none;"></div>
+
+    <div class="editor-controls-row">
+      <label>Color <input type="color" id="editorColor" value="#a5502e"></label>
+      <label>Size <input type="range" id="editorSize" min="2" max="40" value="6"></label>
+    </div>
+
+    <div class="editor-canvas-wrap">
+      <canvas id="editorCanvas"></canvas>
+    </div>
+
+    <div class="editor-footer">
+      <button class="btn btn-ghost" id="editorRetakeBtn">Retake shot</button>
+      <div class="button-row">
+        <button class="btn btn-ghost" id="editorCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="editorSaveBtn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="js/firebase-config.js"></script>
 <script src="js/cleanup.js"></script>
 <script src="js/webrtc.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/room.js"></script>
+<script src="js/nav.js"></script>
 
 </body>
 </html>

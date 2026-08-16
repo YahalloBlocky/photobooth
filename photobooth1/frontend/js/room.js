@@ -20,8 +20,7 @@ roleBadge.classList.toggle('host', isHost);
 let shotCount = 4;
 let capturedShots = [];
 let lastHandledShotIndex = -1;
-let selectedBorder = { type: 'builtin', id: 'classic' };
-let customBorderImg = null;
+let selectedBorder = { type: 'builtin', id: 'flower' };
 
 // ---------- Shot selector ----------
 const shotSelector = document.getElementById('shotSelector');
@@ -45,15 +44,38 @@ function updateShotSelectorUI() {
 }
 
 // ---------- Mic ----------
-let micOn = true;
+// Camera is requested on join; mic is requested separately here so a
+// mic denial never blocks someone from joining at all.
+let micState = 'not-requested'; // 'not-requested' | 'on' | 'off'
 const micBtn = document.getElementById('micBtn');
-micBtn.onclick = () => {
-  micOn = !micOn;
-  mesh.setMicEnabled(micOn);
-  micBtn.classList.toggle('active', micOn);
-  micBtn.classList.toggle('muted', !micOn);
-  micBtn.textContent = micOn ? '🎤' : '🔇';
-  document.getElementById('micStatus').textContent = micOn ? 'Mic on' : 'Mic off';
+micBtn.classList.remove('active');
+
+micBtn.onclick = async () => {
+  if (micState === 'not-requested') {
+    micBtn.disabled = true;
+    document.getElementById('micStatus').textContent = 'Requesting mic…';
+    try {
+      await mesh.enableMic();
+      micState = 'on';
+      micBtn.classList.add('active');
+      micBtn.textContent = '🎤';
+      document.getElementById('micStatus').textContent = 'Mic on';
+    } catch (err) {
+      console.error(err);
+      document.getElementById('micStatus').textContent = 'Mic permission denied';
+    } finally {
+      micBtn.disabled = false;
+    }
+    return;
+  }
+
+  const turningOn = micState === 'off';
+  mesh.setMicEnabled(turningOn);
+  micState = turningOn ? 'on' : 'off';
+  micBtn.classList.toggle('active', turningOn);
+  micBtn.classList.toggle('muted', !turningOn);
+  micBtn.textContent = turningOn ? '🎤' : '🔇';
+  document.getElementById('micStatus').textContent = turningOn ? 'Mic on' : 'Mic off';
 };
 
 // ---------- Mesh setup ----------
@@ -168,29 +190,34 @@ function runCountdownAndCapture(shotIndex) {
   }, 1000);
 }
 
-// Mimics CSS object-fit: cover -- crops the source video to match the
+// Mimics CSS object-fit: cover -- crops the source to match the
 // destination's aspect ratio instead of stretching/distorting it.
-function getCoverCrop(video, destW, destH) {
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) return null;
-  const srcAspect = vw / vh;
+// Works for both <video> (videoWidth/videoHeight) and <img>/canvas
+// (naturalWidth/naturalHeight or width/height) sources.
+function getCoverCropDims(srcW, srcH, destW, destH) {
+  if (!srcW || !srcH) return null;
+  const srcAspect = srcW / srcH;
   const destAspect = destW / destH;
   let sx, sy, sw, sh;
   if (srcAspect > destAspect) {
-    sh = vh;
-    sw = vh * destAspect;
-    sx = (vw - sw) / 2;
+    sh = srcH;
+    sw = srcH * destAspect;
+    sx = (srcW - sw) / 2;
     sy = 0;
   } else {
-    sw = vw;
-    sh = vw / destAspect;
+    sw = srcW;
+    sh = srcW / destAspect;
     sx = 0;
-    sy = (vh - sh) / 2;
+    sy = (srcH - sh) / 2;
   }
   return { sx, sy, sw, sh };
 }
 
-function captureFrame() {
+function getCoverCrop(video, destW, destH) {
+  return getCoverCropDims(video.videoWidth, video.videoHeight, destW, destH);
+}
+
+function buildCompositeFrame() {
   const tiles = [...videoGrid.querySelectorAll('.video-tile')];
   const cols = Math.ceil(Math.sqrt(tiles.length));
   const rows = Math.ceil(tiles.length / cols);
@@ -225,86 +252,122 @@ function captureFrame() {
     ctx.restore();
   });
 
-  capturedShots.push(canvas.toDataURL('image/png'));
+  return canvas.toDataURL('image/png');
+}
+
+function captureFrame() {
+  capturedShots.push(buildCompositeFrame());
 }
 
 // ---------- Results ----------
-const BUILTIN_BORDERS = [
+// Three themed default borders. Each adapts to the actual strip height
+// (which varies by shot count) by scattering its motif proportionally,
+// rather than needing a separately hand-made design per shot count.
+const THEMED_BORDERS = [
   {
-    id: 'classic',
-    label: 'Classic',
-    swatchBg: '#FBF7EE',
-    draw(ctx, width, height) {
-      ctx.fillStyle = '#FBF7EE';
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = '#2B2319';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(9, 9, width - 18, height - 18);
-      ctx.lineWidth = 1;
-      ctx.strokeRect(17, 17, width - 34, height - 34);
-      drawSprockets(ctx, width, height, '#D8C6A8');
-      drawCaption(ctx, width, height, '#2B2319');
-    }
+    id: 'flower',
+    label: 'Flower',
+    swatchBg: 'linear-gradient(135deg, #F3D9E4, #FBF7EE)',
+    bg: '#FBF0F3', frame: '#C97FA0', caption: '#6B3B52',
+    emojis: ['🌸', '🌷', '🌼']
   },
   {
-    id: 'clay',
-    label: 'Clay',
-    swatchBg: '#A5502E',
-    draw(ctx, width, height) {
-      ctx.fillStyle = '#A5502E';
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = '#2B2319';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(9, 9, width - 18, height - 18);
-      drawSprockets(ctx, width, height, '#833E22');
-      drawCaption(ctx, width, height, '#FBF7EE');
-    }
+    id: 'strawberry',
+    label: 'Strawberry',
+    swatchBg: 'linear-gradient(135deg, #F7D6D0, #FBF7EE)',
+    bg: '#FDF1EE', frame: '#C9503E', caption: '#7A2E22',
+    emojis: ['🍓', '🍃', '🍓']
   },
   {
-    id: 'olive',
-    label: 'Olive',
-    swatchBg: '#6B7548',
-    draw(ctx, width, height) {
-      ctx.fillStyle = '#6B7548';
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = '#2B2319';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(9, 9, width - 18, height - 18);
-      drawSprockets(ctx, width, height, '#525C36');
-      drawCaption(ctx, width, height, '#FBF7EE');
-    }
+    id: 'space',
+    label: 'Space',
+    swatchBg: 'linear-gradient(135deg, #2B2A4A, #4B4B7A)',
+    bg: '#20203A', frame: '#8C8CC4', caption: '#F2EADC',
+    emojis: ['✨', '🌙', '⭐']
   }
 ];
 
-function drawSprockets(ctx, width, height, color) {
-  const r = 3, spacing = 22, topMargin = 34, bottomMargin = 50;
-  ctx.fillStyle = color;
-  for (let y = topMargin; y < height - bottomMargin; y += spacing) {
-    ctx.beginPath(); ctx.arc(16, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(width - 16, y, r, 0, Math.PI * 2); ctx.fill();
-  }
-}
+function drawThemedBorder(theme, ctx, width, height) {
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = theme.frame;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(9, 9, width - 18, height - 18);
 
-function drawCaption(ctx, width, height, color) {
-  ctx.fillStyle = color;
-  ctx.font = '600 20px "IBM Plex Mono", monospace';
+  // Scatter the theme's motif down both margins, spacing based on
+  // available height so it naturally adapts to any shot count.
+  const topMargin = 34, bottomMargin = 54;
+  const usableHeight = height - topMargin - bottomMargin;
+  const spacing = 64;
+  const count = Math.max(2, Math.floor(usableHeight / spacing));
+  ctx.font = '22px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('TOGETHER BOOTH', width / 2, height - 16);
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= count; i++) {
+    const y = topMargin + (usableHeight * i) / count;
+    const emoji = theme.emojis[i % theme.emojis.length];
+    ctx.fillText(emoji, 20, y);
+    ctx.fillText(emoji, width - 20, y);
+  }
+
+  ctx.fillStyle = theme.caption;
+  ctx.font = '600 20px "IBM Plex Mono", monospace';
+  ctx.fillText('PHOTOGETHER', width / 2, height - 24);
 }
 
 async function showResults() {
   document.getElementById('roomView').style.display = 'none';
   document.getElementById('resultsView').style.display = 'block';
 
+  renderShotThumbnails();
   await loadBorderOptions();
   await updatePreview();
+}
+
+function renderShotThumbnails() {
+  let thumbWrap = document.getElementById('shotThumbs');
+  if (!thumbWrap) {
+    thumbWrap = document.createElement('div');
+    thumbWrap.id = 'shotThumbs';
+    thumbWrap.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; max-width:260px;';
+    document.getElementById('filmstrip').insertAdjacentElement('beforebegin', thumbWrap);
+  }
+  thumbWrap.innerHTML = '';
+  capturedShots.forEach((src, i) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'shot-thumb';
+    thumb.style.width = '76px';
+    thumb.innerHTML = `<img src="${src}" alt="Shot ${i + 1}"><span class="edit-tag">Edit</span>`;
+    thumb.onclick = () => openShotEditor(i);
+    thumbWrap.appendChild(thumb);
+  });
+}
+
+function openShotEditor(index) {
+  PhotoEditor.open({
+    imageSrc: capturedShots[index],
+    width: 480,
+    height: 360,
+    onSave: (newDataUrl) => {
+      capturedShots[index] = newDataUrl;
+      renderShotThumbnails();
+      updatePreview();
+    },
+    onRetake: async () => {
+      const fresh = buildCompositeFrame();
+      capturedShots[index] = fresh;
+      renderShotThumbnails();
+      updatePreview();
+      return fresh;
+    }
+  });
 }
 
 async function loadBorderOptions() {
   const container = document.getElementById('borderOptions');
   container.innerHTML = '';
 
-  BUILTIN_BORDERS.forEach(b => {
+  THEMED_BORDERS.forEach(b => {
     const swatch = document.createElement('div');
     swatch.className = 'border-swatch' + (selectedBorder.type === 'builtin' && selectedBorder.id === b.id ? ' selected' : '');
     swatch.style.background = b.swatchBg;
@@ -319,7 +382,7 @@ async function loadBorderOptions() {
   });
 
   try {
-    const bordersSnap = await db.collection('borders').get();
+    const bordersSnap = await db.collection('borders').where('shotCount', '==', shotCount).get();
     bordersSnap.forEach(doc => {
       const data = doc.data();
       const swatch = document.createElement('div');
@@ -343,22 +406,6 @@ async function updatePreview() {
   document.getElementById('previewImg').src = canvas.toDataURL('image/png');
 }
 
-document.getElementById('customBorderInput').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    const img = new Image();
-    img.onload = () => {
-      customBorderImg = img;
-      selectedBorder = { type: 'custom' };
-      updatePreview();
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
-});
-
 function renderFinalStrip() {
   return new Promise(async (resolve) => {
     await document.fonts.ready;
@@ -380,7 +427,13 @@ function renderFinalStrip() {
         const img = new Image();
         img.onload = () => {
           const y = padding + i * (photoH + gap);
-          ctx.drawImage(img, padding, y, photoW, photoH);
+          // Crop to fit the slot instead of stretching -- fixes the warp.
+          const crop = getCoverCropDims(img.naturalWidth, img.naturalHeight, photoW, photoH);
+          if (crop) {
+            ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, padding, y, photoW, photoH);
+          } else {
+            ctx.drawImage(img, padding, y, photoW, photoH);
+          }
           if (i === capturedShots.length - 1) resolve(canvas);
         };
         img.src = src;
@@ -388,11 +441,8 @@ function renderFinalStrip() {
     };
 
     if (selectedBorder.type === 'builtin') {
-      const b = BUILTIN_BORDERS.find(x => x.id === selectedBorder.id);
-      b.draw(ctx, width, height);
-      drawPhotos();
-    } else if (selectedBorder.type === 'custom' && customBorderImg) {
-      ctx.drawImage(customBorderImg, 0, 0, width, height);
+      const theme = THEMED_BORDERS.find(x => x.id === selectedBorder.id);
+      drawThemedBorder(theme, ctx, width, height);
       drawPhotos();
     } else if (selectedBorder.type === 'image') {
       const bImg = new Image();
