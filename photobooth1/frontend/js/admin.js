@@ -70,7 +70,7 @@ async function loadPhotos() {
       const date = data.createdAt ? data.createdAt.toDate().toLocaleString() : '';
       wrap.innerHTML = `
         <img src="${data.imageData}" alt="Photo from room ${data.roomCode}">
-        <div class="meta">${data.roomCode} · ${date}</div>
+        <div class="meta">${data.roomCode} · ${date}${data.editedFrom ? ' · <span style="color:var(--clay);">Edited copy</span>' : ''}</div>
         <div class="button-row" style="margin-top:6px;">
           <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="edit">Edit</button>
           <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="remove">Remove</button>
@@ -85,7 +85,14 @@ async function loadPhotos() {
             width: img.naturalWidth,
             height: img.naturalHeight,
             onSave: async ({ dataUrl }) => {
-              await db.collection('photos').doc(doc.id).set({ imageData: dataUrl }, { merge: true });
+              // Save as a new, separate photo rather than overwriting the
+              // original -- keeps both the untouched and edited versions.
+              await db.collection('photos').add({
+                roomCode: data.roomCode,
+                imageData: dataUrl,
+                editedFrom: doc.id,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+              });
               loadPhotos();
             }
           });

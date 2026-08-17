@@ -1,17 +1,16 @@
 // =========================================================
 // Whole-strip photo editor.
 //
-// Two modes:
-//   'strip' - room.js: editing the full photo strip (frame + all shots
-//             together). Each shot can be individually repositioned.
-//   'flat'  - admin.js: editing a single already-flattened saved photo.
+// 'strip' mode (room.js): frame + every shot, where each shot is made of
+// one or more independent "layers" (one per participant). Shots can be
+// freely repositioned (Move), and each person's own layer within a shot
+// can be independently cropped/rotated/flipped (Crop).
 //
-// Architecture: a base layer (frame + photos, or single image) is drawn
-// fresh every render. A SEPARATE offscreen ink canvas holds only pen
-// strokes -- erasing works only within that layer, so it can never eat
-// into the photo or frame underneath. Text/photo objects are drawn on
-// top of everything and are individually selectable, movable, resizable,
-// and deletable.
+// 'flat' mode (admin.js): a single already-flattened saved photo, with
+// pan/crop/rotate/flip on the whole image.
+//
+// Ink strokes live on a separate offscreen layer -- erasing only ever
+// removes ink, never the photo or frame underneath.
 // =========================================================
 
 const PhotoEditor = (() => {
@@ -21,17 +20,19 @@ const PhotoEditor = (() => {
 
   // 'flat' mode
   let flatImg = null;
-  let flatCrop = { x: 0, y: 0, w: 0, h: 0 };
+  let flatCrop = { x: 0, y: 0, w: 0, h: 0, rotation: 0, flipX: false };
 
   // 'strip' mode
-  let shotImgs = [];      // Image objects, one per shot
-  let shotRects = [];     // {x,y,w,h} slot for each shot within the strip
-  let shotCrops = [];     // {x,y,w,h} source crop window per shot
+  let shots = [];              // [{ layers: [{ img }, ...] }]
+  let shotSize = { w: 0, h: 0 };
+  let shotPositions = [];      // [{x,y}] -- mutable, one per shot
+  let layerCrops = [];         // [[{x,y,w,h,rotation,flipX}]] -- [shotIdx][layerIdx]
   let frameRenderer = null;
   let customFrameImg = null;
+  let activeLayerRef = null;   // {shotIdx, layerIdx} -- last touched via Crop tool
 
-  let actions = [];       // ink strokes: {type:'stroke'|'erase', color, size, points[]}
-  let objects = [];       // {id,type:'text'|'image', x,y,w,h,text,font,color,img?}
+  let actions = [];
+  let objects = [];
   let selectedId = null;
   let nextObjectId = 1;
 
@@ -43,13 +44,14 @@ const PhotoEditor = (() => {
   let undoStack = [];
   let redoStack = [];
 
-  let dragMode = null; // 'crop' | 'object-move' | 'object-resize' | 'stroke'
+  let dragMode = null; // 'shot' | 'layer-crop' | 'flat-crop' | 'object-move' | 'object-resize' | 'stroke'
   let dragTarget = null;
   let dragStart = null;
-  let cropStartVal = null;
+  let dragStartVal = null;
 
   let onSaveCb = null;
   let textEditEl = null;
+  let lastScaleX = 1; // canvas units per CSS px, used to size touch targets sensibly
 
   function ensureDom() {
     overlay = document.getElementById('editorOverlay');
@@ -59,9 +61,11 @@ const PhotoEditor = (() => {
     inkCtx = inkCanvas.getContext('2d');
   }
 
+  // ---------- History ----------
   function snapshot() {
     return JSON.stringify({
-      shotCrops,
+      shotPositions,
+      layerCrops,
       actions,
       objects: objects.map(o => ({ ...o, img: undefined, imgSrc: o.img ? o.img.src : undefined })),
       flatCrop,
@@ -71,21 +75,18 @@ const PhotoEditor = (() => {
 
   function pushHistory() {
     undoStack.push(snapshot());
-    if (undoStack.length > 40) undoStack.shift();
+    if (undoStack.length > 50) undoStack.shift();
     redoStack = [];
   }
 
   function restore(snapStr) {
     const s = JSON.parse(snapStr);
-    shotCrops = s.shotCrops || shotCrops;
+    shotPositions = s.shotPositions || shotPositions;
+    layerCrops = s.layerCrops || layerCrops;
     actions = s.actions || [];
     flatCrop = s.flatCrop || flatCrop;
 
-    const finish = () => {
-      renderInkLayer();
-      render();
-      updateContextControls();
-    };
+    const finish = () => { renderInkLayer(); render(); updateContextControls(); };
 
     const applyFrame = () => {
       if (s.customFrameSrc) {
@@ -133,6 +134,7 @@ const PhotoEditor = (() => {
     restore(redoStack.pop());
   }
 
+  // ---------- Geometry helpers ----------
   function computeCoverCrop(srcW, srcH, destW, destH) {
     const srcAspect = srcW / srcH;
     const destAspect = destW / destH;
@@ -142,7 +144,7 @@ const PhotoEditor = (() => {
     } else {
       sw = srcW; sh = srcW / destAspect; sx = 0; sy = (srcH - sh) / 2;
     }
-    return { x: sx, y: sy, w: sw, h: sh };
+    return { x: sx, y: sy, w: sw, h: sh, rotation: 0, flipX: false };
   }
 
   function clampCrop(crop, img) {
@@ -150,6 +152,19 @@ const PhotoEditor = (() => {
     crop.y = Math.max(0, Math.min(img.naturalHeight - crop.h, crop.y));
   }
 
+  function layerRectsForShot(shotX, shotY, layerCount) {
+    const rects = [];
+    const w = shotSize.w / Math.max(1, layerCount);
+    for (let j = 0; j < layerCount; j++) rects.push({ x: shotX + w * j, y: shotY, w, h: shotSize.h });
+    return rects;
+  }
+
+  function shotBounds(shotIdx) {
+    const pos = shotPositions[shotIdx];
+    return { x: pos.x, y: pos.y, w: shotSize.w, h: shotSize.h };
+  }
+
+  // ---------- Rendering ----------
   function renderInkLayer() {
     inkCanvas.width = width;
     inkCanvas.height = height;
@@ -168,31 +183,69 @@ const PhotoEditor = (() => {
     });
   }
 
+  function drawTransformed(img, crop, destRect) {
+    const rotation = crop.rotation || 0;
+    const flipX = !!crop.flipX;
+    ctx.save();
+    ctx.translate(destRect.x + destRect.w / 2, destRect.y + destRect.h / 2);
+    ctx.rotate((rotation * Math.PI) / 180);
+    if (flipX) ctx.scale(-1, 1);
+    const swapped = rotation === 90 || rotation === 270;
+    const drawW = swapped ? destRect.h : destRect.w;
+    const drawH = swapped ? destRect.w : destRect.h;
+    ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+  }
+
+  function textBounds(o) {
+    ctx.font = `600 ${o.h}px ${o.font}`;
+    const m = ctx.measureText(o.text);
+    const w = Math.max(24, m.width);
+    return { x: o.x - 6, y: o.y - 4, w: w + 12, h: o.h + 10 };
+  }
+
   function objectBounds(o) {
-    if (o.type === 'text') {
-      ctx.font = `600 ${o.h}px ${o.font}`;
-      const w = Math.max(20, ctx.measureText(o.text).width);
-      return { x: o.x, y: o.y, w, h: o.h };
-    }
-    return { x: o.x, y: o.y, w: o.w, h: o.h };
+    return o.type === 'text' ? textBounds(o) : { x: o.x, y: o.y, w: o.w, h: o.h };
   }
 
   function render() {
     ctx.clearRect(0, 0, width, height);
 
     if (mode === 'flat') {
-      if (flatImg) ctx.drawImage(flatImg, flatCrop.x, flatCrop.y, flatCrop.w, flatCrop.h, 0, 0, width, height);
+      if (flatImg) drawTransformed(flatImg, flatCrop, { x: 0, y: 0, w: width, h: height });
     } else {
       if (customFrameImg) {
         ctx.drawImage(customFrameImg, 0, 0, width, height);
       } else if (frameRenderer) {
         frameRenderer(ctx, width, height);
       }
-      shotImgs.forEach((img, i) => {
-        if (!img) return;
-        const rect = shotRects[i];
-        const crop = shotCrops[i];
-        ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, rect.x, rect.y, rect.w, rect.h);
+
+      shots.forEach((shot, i) => {
+        const pos = shotPositions[i];
+        const rects = layerRectsForShot(pos.x, pos.y, shot.layers.length);
+        shot.layers.forEach((layer, j) => {
+          if (!layer.img) return;
+          drawTransformed(layer.img, layerCrops[i][j], rects[j]);
+        });
+
+        if (currentTool === 'move') {
+          const b = shotBounds(i);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(165,80,46,0.55)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(b.x, b.y, b.w, b.h);
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+        if (currentTool === 'crop' && activeLayerRef && activeLayerRef.shotIdx === i) {
+          const r = rects[activeLayerRef.layerIdx];
+          ctx.save();
+          ctx.strokeStyle = '#A5502E';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(r.x, r.y, r.w, r.h);
+          ctx.restore();
+        }
       });
     }
 
@@ -214,21 +267,34 @@ const PhotoEditor = (() => {
         const b = objectBounds(o);
         ctx.save();
         ctx.strokeStyle = '#A5502E';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
         ctx.strokeRect(b.x, b.y, b.w, b.h);
         ctx.setLineDash([]);
+        const hs = handleSize();
         ctx.fillStyle = '#A5502E';
-        ctx.fillRect(b.x + b.w - 8, b.y + b.h - 8, 16, 16);
+        ctx.beginPath();
+        ctx.arc(b.x + b.w, b.y + b.h, hs / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
         ctx.restore();
       }
     });
+  }
+
+  // Keeps touch targets a usable size (~34 CSS px) regardless of how much
+  // the canvas is scaled down to fit the screen.
+  function handleSize() {
+    return Math.max(18, 34 * lastScaleX);
   }
 
   function getPos(e) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
+    lastScaleX = scaleX;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
@@ -238,22 +304,39 @@ const PhotoEditor = (() => {
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
       const b = objectBounds(o);
+      const hs = handleSize();
+      const nearHandle = Math.hypot(pos.x - (b.x + b.w), pos.y - (b.y + b.h)) <= hs;
+      if (nearHandle) return { obj: o, onHandle: true, bounds: b };
       if (pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h) {
-        const onHandle = pos.x >= b.x + b.w - 16 && pos.y >= b.y + b.h - 16;
-        return { obj: o, onHandle, bounds: b };
+        return { obj: o, onHandle: false, bounds: b };
       }
     }
     return null;
   }
 
   function hitTestShot(pos) {
-    for (let i = 0; i < shotRects.length; i++) {
-      const r = shotRects[i];
-      if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) return i;
+    for (let i = 0; i < shotPositions.length; i++) {
+      const b = shotBounds(i);
+      if (pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h) return i;
     }
     return -1;
   }
 
+  function hitTestLayer(pos) {
+    for (let i = 0; i < shots.length; i++) {
+      const pos_i = shotPositions[i];
+      const rects = layerRectsForShot(pos_i.x, pos_i.y, shots[i].layers.length);
+      for (let j = 0; j < rects.length; j++) {
+        const r = rects[j];
+        if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) {
+          return { shotIdx: i, layerIdx: j };
+        }
+      }
+    }
+    return null;
+  }
+
+  // ---------- Pointer handling ----------
   function onPointerDown(e) {
     e.preventDefault();
     const pos = getPos(e);
@@ -270,11 +353,7 @@ const PhotoEditor = (() => {
       return;
     }
 
-    if (selectedId !== null) {
-      selectedId = null;
-      updateContextControls();
-      render();
-    }
+    if (selectedId !== null) { selectedId = null; updateContextControls(); render(); }
 
     if (currentTool === 'draw' || currentTool === 'erase') {
       pushHistory();
@@ -287,23 +366,41 @@ const PhotoEditor = (() => {
       return;
     }
 
-    if (currentTool === 'move') {
-      if (mode === 'flat') {
+    if (mode === 'flat' && currentTool === 'move') {
+      pushHistory();
+      dragMode = 'flat-crop';
+      dragTarget = flatCrop;
+      dragStart = pos;
+      dragStartVal = { x: flatCrop.x, y: flatCrop.y };
+      return;
+    }
+
+    if (mode === 'strip' && currentTool === 'move') {
+      const shotIdx = hitTestShot(pos);
+      if (shotIdx >= 0) {
         pushHistory();
-        dragMode = 'crop';
-        dragTarget = flatCrop;
+        dragMode = 'shot';
+        dragTarget = shotPositions[shotIdx];
         dragStart = pos;
-        cropStartVal = { x: flatCrop.x, y: flatCrop.y };
-        return;
+        dragStartVal = { x: shotPositions[shotIdx].x, y: shotPositions[shotIdx].y };
       }
-      const shotIndex = hitTestShot(pos);
-      if (shotIndex >= 0) {
+      return;
+    }
+
+    if (mode === 'strip' && currentTool === 'crop') {
+      const hitLayer = hitTestLayer(pos);
+      if (hitLayer) {
+        activeLayerRef = hitLayer;
+        updateContextControls();
         pushHistory();
-        dragMode = 'crop';
-        dragTarget = shotCrops[shotIndex];
+        const crop = layerCrops[hitLayer.shotIdx][hitLayer.layerIdx];
+        dragMode = 'layer-crop';
+        dragTarget = crop;
+        dragTarget._shotIdx = hitLayer.shotIdx;
+        dragTarget._layerIdx = hitLayer.layerIdx;
         dragStart = pos;
-        cropStartVal = { x: shotCrops[shotIndex].x, y: shotCrops[shotIndex].y };
-        dragTarget._shotIndex = shotIndex;
+        dragStartVal = { x: crop.x, y: crop.y };
+        render();
       }
     }
   }
@@ -329,22 +426,29 @@ const PhotoEditor = (() => {
     if (dragMode === 'object-resize') {
       const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
       if (dragTarget.type === 'image') {
-        dragTarget.w = Math.max(20, dragTarget.w + dx);
-        dragTarget.h = Math.max(20, dragTarget.h + dy);
+        dragTarget.w = Math.max(24, dragTarget.w + dx);
+        dragTarget.h = Math.max(24, dragTarget.h + dy);
       } else {
-        dragTarget.h = Math.max(12, dragTarget.h + dy);
+        const diag = Math.hypot(dx, dy) * (dx + dy >= 0 ? 1 : -1);
+        dragTarget.h = Math.max(12, dragTarget.h + diag * 0.5);
       }
       dragStart = pos;
       render();
       return;
     }
-    if (dragMode === 'crop') {
+    if (dragMode === 'shot') {
+      dragTarget.x = dragStartVal.x + (pos.x - dragStart.x);
+      dragTarget.y = dragStartVal.y + (pos.y - dragStart.y);
+      render();
+      return;
+    }
+    if (dragMode === 'flat-crop' || dragMode === 'layer-crop') {
       const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
-      const destW = mode === 'flat' ? width : shotRects[dragTarget._shotIndex].w;
+      const destW = dragMode === 'flat-crop' ? width : shotSize.w / shots[dragTarget._shotIdx].layers.length;
       const scale = dragTarget.w / destW;
-      dragTarget.x = cropStartVal.x - dx * scale;
-      dragTarget.y = cropStartVal.y - dy * scale;
-      const img = mode === 'flat' ? flatImg : shotImgs[dragTarget._shotIndex];
+      dragTarget.x = dragStartVal.x - dx * scale;
+      dragTarget.y = dragStartVal.y - dy * scale;
+      const img = dragMode === 'flat-crop' ? flatImg : shots[dragTarget._shotIdx].layers[dragTarget._layerIdx].img;
       clampCrop(dragTarget, img);
       render();
     }
@@ -354,8 +458,10 @@ const PhotoEditor = (() => {
     dragMode = null;
     dragTarget = null;
     dragStart = null;
+    dragStartVal = null;
   }
 
+  // ---------- Tools ----------
   function selectTool(tool) {
     currentTool = tool;
     document.querySelectorAll('#editorToolbar .tool-btn[data-tool]').forEach(b => {
@@ -363,7 +469,11 @@ const PhotoEditor = (() => {
     });
     if (tool === 'text') { addTextObject(); selectTool('move'); return; }
     if (tool === 'photo') { triggerPhotoUpload(); selectTool('move'); return; }
+    if (tool === 'crop' && mode === 'strip' && !activeLayerRef && shots.length) {
+      activeLayerRef = { shotIdx: 0, layerIdx: 0 };
+    }
     updateContextControls();
+    render();
   }
 
   function addTextObject() {
@@ -409,7 +519,8 @@ const PhotoEditor = (() => {
     if (textEditEl) textEditEl.remove();
     textEditEl = document.createElement('textarea');
     textEditEl.value = obj.text;
-    textEditEl.style.cssText = `position: fixed; left:${rect.left + obj.x * scale}px; top:${rect.top + obj.y * scale}px; font: 600 ${obj.h * scale}px ${obj.font}; color:${obj.color}; border:1px dashed #A5502E; background: rgba(255,255,255,0.9); z-index: 300; padding:2px; min-width: 80px; resize: both;`;
+    textEditEl.spellcheck = false;
+    textEditEl.style.cssText = `position: fixed; left:${rect.left + obj.x * scale}px; top:${rect.top + obj.y * scale}px; font: 600 ${obj.h * scale}px ${obj.font}; color:${obj.color}; border:2px solid #A5502E; border-radius:6px; background: rgba(255,255,255,0.95); z-index: 300; padding:4px 6px; min-width: 100px; resize: both; line-height:1.2;`;
     document.body.appendChild(textEditEl);
     textEditEl.focus();
     textEditEl.select();
@@ -431,13 +542,37 @@ const PhotoEditor = (() => {
     updateContextControls();
   }
 
+  function rotateActiveLayer() {
+    const crop = mode === 'flat' ? flatCrop : (activeLayerRef && layerCrops[activeLayerRef.shotIdx][activeLayerRef.layerIdx]);
+    if (!crop) return;
+    pushHistory();
+    crop.rotation = ((crop.rotation || 0) + 90) % 360;
+    render();
+  }
+
+  function flipActiveLayer() {
+    const crop = mode === 'flat' ? flatCrop : (activeLayerRef && layerCrops[activeLayerRef.shotIdx][activeLayerRef.layerIdx]);
+    if (!crop) return;
+    pushHistory();
+    crop.flipX = !crop.flipX;
+    render();
+  }
+
   function updateContextControls() {
     const deleteBtn = document.getElementById('editorDeleteBtn');
     const fontWrap = document.getElementById('editorFontWrap');
+    const rotateBtn = document.getElementById('editorRotateLayerBtn');
+    const flipBtn = document.getElementById('editorFlipLayerBtn');
     const selectedObj = objects.find(o => o.id === selectedId);
 
     deleteBtn.style.display = selectedObj ? 'inline-flex' : 'none';
     fontWrap.style.display = (selectedObj && selectedObj.type === 'text') ? 'inline-flex' : 'none';
+
+    if (rotateBtn && flipBtn) {
+      const showLayerControls = mode === 'flat' || currentTool === 'crop';
+      rotateBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
+      flipBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
+    }
 
     if (selectedObj && selectedObj.type === 'text') {
       document.getElementById('editorColor').value = selectedObj.color;
@@ -445,6 +580,7 @@ const PhotoEditor = (() => {
     }
   }
 
+  // ---------- Wiring ----------
   function wireOnce() {
     if (wireOnce._done) return;
     wireOnce._done = true;
@@ -473,22 +609,31 @@ const PhotoEditor = (() => {
     document.getElementById('editorDeleteBtn').addEventListener('click', deleteSelected);
     document.getElementById('editorUndoBtn').addEventListener('click', undo);
     document.getElementById('editorRedoBtn').addEventListener('click', redo);
+
+    const rotateBtn = document.getElementById('editorRotateLayerBtn');
+    const flipBtn = document.getElementById('editorFlipLayerBtn');
+    if (rotateBtn) rotateBtn.addEventListener('click', rotateActiveLayer);
+    if (flipBtn) flipBtn.addEventListener('click', flipActiveLayer);
+
     document.getElementById('editorResetBtn').addEventListener('click', async () => {
-      const ok = await UIDialog.confirm('Reset all edits on this frame? This clears drawings, text, images, and repositioning.');
+      const ok = await UIDialog.confirm('Reset all edits? This clears drawings, text, images, and any repositioning or cropping.');
       if (ok) resetAll();
     });
 
-    document.getElementById('editorFrameUpload').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file || mode !== 'strip') return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => { pushHistory(); customFrameImg = img; render(); };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
+    const frameUpload = document.getElementById('editorFrameUpload');
+    if (frameUpload) {
+      frameUpload.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file || mode !== 'strip') return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => { pushHistory(); customFrameImg = img; render(); };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
 
     document.getElementById('editorCancelBtn').addEventListener('click', close);
     document.getElementById('editorSaveBtn').addEventListener('click', () => {
@@ -498,7 +643,8 @@ const PhotoEditor = (() => {
         onSaveCb({
           dataUrl,
           state: mode === 'strip' ? {
-            shotCrops: JSON.parse(JSON.stringify(shotCrops)),
+            shotPositions: JSON.parse(JSON.stringify(shotPositions)),
+            shotCrops: JSON.parse(JSON.stringify(layerCrops)),
             actions: JSON.parse(JSON.stringify(actions)),
             objects: objects.map(o => o.type === 'image' ? { ...o, img: undefined, imgSrc: o.img.src } : { ...o }),
             customFrameSrc: customFrameImg ? customFrameImg.src : null
@@ -522,8 +668,13 @@ const PhotoEditor = (() => {
 
   function resetAll() {
     if (mode === 'strip') {
-      shotCrops = shotImgs.map((img, i) => computeCoverCrop(img.naturalWidth, img.naturalHeight, shotRects[i].w, shotRects[i].h));
+      shotPositions = shots.map((_, i) => ({ ...defaultPositionsRef[i] }));
+      layerCrops = shots.map((shot, i) => shot.layers.map((layer, j) => {
+        const rects = layerRectsForShot(defaultPositionsRef[i].x, defaultPositionsRef[i].y, shot.layers.length);
+        return computeCoverCrop(layer.img.naturalWidth, layer.img.naturalHeight, rects[j].w, rects[j].h);
+      }));
       customFrameImg = null;
+      activeLayerRef = shots.length ? { shotIdx: 0, layerIdx: 0 } : null;
     } else {
       flatCrop = computeCoverCrop(flatImg.naturalWidth, flatImg.naturalHeight, width, height);
     }
@@ -537,6 +688,9 @@ const PhotoEditor = (() => {
     updateContextControls();
   }
 
+  let defaultPositionsRef = [];
+
+  // ---------- Public API ----------
   function openFlat({ imageSrc, width: w, height: h, onSave }) {
     ensureDom();
     wireOnce();
@@ -547,7 +701,9 @@ const PhotoEditor = (() => {
     undoStack = []; redoStack = [];
     onSaveCb = onSave;
 
-    document.getElementById('editorFrameUploadLabel').style.display = 'none';
+    const frameLabel = document.getElementById('editorFrameUploadLabel');
+    if (frameLabel) frameLabel.style.display = 'none';
+
     selectTool('move');
     currentColor = document.getElementById('editorColor').value;
     currentSize = Number(document.getElementById('editorSize').value);
@@ -565,42 +721,58 @@ const PhotoEditor = (() => {
     overlay.classList.add('open');
   }
 
-  function openStrip({ shots, shotRects: rects, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
+  function openStrip({ shots: shotSrcs, defaultShotPositions, shotSize: sSize, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
     ensureDom();
     wireOnce();
     mode = 'strip';
     width = w; height = h;
     canvas.width = w; canvas.height = h;
-    shotRects = rects;
+    shotSize = sSize;
+    defaultPositionsRef = defaultShotPositions;
     frameRenderer = fr;
     onSaveCb = onSave;
     selectedId = null;
+    activeLayerRef = null;
     undoStack = []; redoStack = [];
 
     actions = initialState ? JSON.parse(JSON.stringify(initialState.actions || [])) : [];
     const restoredObjMeta = initialState ? (initialState.objects || []) : [];
     customFrameImg = null;
 
-    document.getElementById('editorFrameUploadLabel').style.display = 'inline-flex';
+    const frameLabel = document.getElementById('editorFrameUploadLabel');
+    if (frameLabel) frameLabel.style.display = 'inline-flex';
+
     selectTool('move');
     currentColor = document.getElementById('editorColor').value;
     currentSize = Number(document.getElementById('editorSize').value);
 
-    let loaded = 0;
-    shotImgs = shots.map(() => null);
-    shotCrops = shots.map(() => ({ x: 0, y: 0, w: 0, h: 0 }));
+    shotPositions = shotSrcs.map((_, i) => (initialState && initialState.shotPositions && initialState.shotPositions[i]) || { ...defaultShotPositions[i] });
 
-    shots.forEach((src, i) => {
-      const img = new Image();
-      img.onload = () => {
-        shotImgs[i] = img;
-        shotCrops[i] = (initialState && initialState.shotCrops && initialState.shotCrops[i])
-          ? initialState.shotCrops[i]
-          : computeCoverCrop(img.naturalWidth, img.naturalHeight, rects[i].w, rects[i].h);
-        loaded++;
-        if (loaded === shots.length) finishOpenStrip(restoredObjMeta, initialState);
-      };
-      img.src = src;
+    shots = shotSrcs.map(s => ({ layers: s.layers.map(() => ({ img: null })) }));
+    layerCrops = shotSrcs.map(() => []);
+
+    let totalLayers = 0;
+    shotSrcs.forEach(s => { totalLayers += s.layers.length; });
+    let loaded = 0;
+
+    if (totalLayers === 0) {
+      finishOpenStrip(restoredObjMeta, initialState);
+      return;
+    }
+
+    shotSrcs.forEach((shot, i) => {
+      shot.layers.forEach((layer, j) => {
+        const img = new Image();
+        img.onload = () => {
+          shots[i].layers[j].img = img;
+          const rects = layerRectsForShot(shotPositions[i].x, shotPositions[i].y, shot.layers.length);
+          const restoredCrop = initialState && initialState.shotCrops && initialState.shotCrops[i] && initialState.shotCrops[i][j];
+          layerCrops[i][j] = restoredCrop || computeCoverCrop(img.naturalWidth, img.naturalHeight, rects[j].w, rects[j].h);
+          loaded++;
+          if (loaded === totalLayers) finishOpenStrip(restoredObjMeta, initialState);
+        };
+        img.src = layer.src;
+      });
     });
   }
 
@@ -609,6 +781,7 @@ const PhotoEditor = (() => {
 
     const applyObjects = (imgCache) => {
       objects = restoredObjMeta.map(o => o.type === 'image' ? { ...o, img: imgCache[o.imgSrc] } : { ...o });
+      activeLayerRef = shots.length ? { shotIdx: 0, layerIdx: 0 } : null;
 
       const afterFrame = () => { renderInkLayer(); render(); updateContextControls(); overlay.classList.add('open'); };
 

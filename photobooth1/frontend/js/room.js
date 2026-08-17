@@ -18,17 +18,18 @@ roleBadge.textContent = isHost ? 'Host' : 'Guest';
 roleBadge.classList.toggle('host', isHost);
 
 let shotCount = 4;
+// Each shot = { layers: [{ src }, ...] } -- one layer per participant tile,
+// captured separately so each person can be cropped/repositioned on their own.
 let capturedShots = [];
 let lastHandledShotIndex = -1;
 let selectedBorder = { type: 'builtin', id: 'flower' };
-let guestsCanEdit = false;
 
-// Persists across preview re-renders and editor sessions: per-shot crop
-// windows, ink strokes, text/photo objects, and any custom uploaded frame.
-let editState = { shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+// Persists across preview re-renders and editor sessions. Purely local to
+// this browser -- host and guest each edit their own independent copy.
+let editState = { shotPositions: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
 
 function resetEditState() {
-  editState = { shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+  editState = { shotPositions: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
 }
 
 // ---------- Shot selector ----------
@@ -52,36 +53,7 @@ function updateShotSelectorUI() {
   });
 }
 
-// ---------- Host: allow guests to edit ----------
-const guestEditToggleWrap = document.getElementById('guestEditToggleWrap');
-const guestEditToggle = document.getElementById('guestEditToggle');
-if (isHost) {
-  guestEditToggleWrap.style.display = 'block';
-  guestEditToggle.onclick = async () => {
-    await roomRef.set({ guestsCanEdit: !guestsCanEdit }, { merge: true });
-  };
-}
-
-function canEdit() {
-  return isHost || guestsCanEdit;
-}
-
-function updateEditButtonState() {
-  const btn = document.getElementById('openEditorBtn');
-  const hint = document.getElementById('editPermissionHint');
-  if (!btn) return;
-  if (canEdit()) {
-    btn.disabled = false;
-    hint.textContent = 'Reposition photos, draw, add text or images, or upload your own frame.';
-  } else {
-    btn.disabled = true;
-    hint.textContent = 'Only the host can edit right now.';
-  }
-}
-
 // ---------- Mic ----------
-// Camera is requested on join; mic is requested separately here so a
-// mic denial never blocks someone from joining at all.
 let micState = 'not-requested'; // 'not-requested' | 'on' | 'off'
 const micBtn = document.getElementById('micBtn');
 micBtn.classList.remove('active');
@@ -90,6 +62,22 @@ micBtn.onclick = async () => {
   if (micState === 'not-requested') {
     micBtn.disabled = true;
     document.getElementById('micStatus').textContent = 'Requesting mic…';
+
+    // If the browser can tell us the mic is already hard-blocked for this
+    // site, say so clearly -- calling getUserMedia again won't re-show the
+    // permission prompt once a person has explicitly denied it; only
+    // changing it in the browser's site settings will.
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const status = await navigator.permissions.query({ name: 'microphone' });
+        if (status.state === 'denied') {
+          document.getElementById('micStatus').textContent = 'Mic blocked — enable it in your browser\'s site settings, then reload.';
+          micBtn.disabled = false;
+          return;
+        }
+      }
+    } catch (e) { /* permissions API not supported here, fall through and just try */ }
+
     try {
       await mesh.enableMic();
       micState = 'on';
@@ -98,7 +86,7 @@ micBtn.onclick = async () => {
       document.getElementById('micStatus').textContent = 'Mic on';
     } catch (err) {
       console.error(err);
-      document.getElementById('micStatus').textContent = 'Mic permission denied';
+      document.getElementById('micStatus').textContent = 'Mic permission denied — tap again to retry, or check site settings.';
     } finally {
       micBtn.disabled = false;
     }
@@ -112,6 +100,30 @@ micBtn.onclick = async () => {
   micBtn.classList.toggle('muted', !turningOn);
   micBtn.textContent = turningOn ? '🎤' : '🔇';
   document.getElementById('micStatus').textContent = turningOn ? 'Mic on' : 'Mic off';
+};
+
+// ---------- Manual mirror / rotate (your own camera only) ----------
+// Some devices deliver an already-mirrored camera feed at the hardware
+// level, which shows up as "my partner looks flipped" and can't be
+// reliably auto-detected from code. These give each person manual control
+// over their OWN camera's mirror/rotation, both for their live preview and
+// for what gets baked into their captured shots.
+let mirrorLocal = true;
+let localRotation = 0; // 0, 90, 180, 270
+
+function applyLocalVideoTransform() {
+  const el = document.getElementById('localVideo');
+  el.style.transform = `rotate(${localRotation}deg) scaleX(${mirrorLocal ? -1 : 1})`;
+}
+applyLocalVideoTransform();
+
+document.getElementById('mirrorBtn').onclick = () => {
+  mirrorLocal = !mirrorLocal;
+  applyLocalVideoTransform();
+};
+document.getElementById('rotateBtn').onclick = () => {
+  localRotation = (localRotation + 90) % 360;
+  applyLocalVideoTransform();
 };
 
 // ---------- Mesh setup ----------
@@ -157,11 +169,6 @@ roomRef.onSnapshot((snap) => {
   shotCount = data.shotCount || 4;
   updateShotSelectorUI();
 
-  guestsCanEdit = !!data.guestsCanEdit;
-  guestEditToggle.textContent = guestsCanEdit ? 'On' : 'Off';
-  guestEditToggle.classList.toggle('selected', guestsCanEdit);
-  updateEditButtonState();
-
   if (data.status === 'countdown' && data.currentShot !== lastHandledShotIndex) {
     lastHandledShotIndex = data.currentShot;
     runCountdownAndCapture(data.currentShot);
@@ -190,8 +197,6 @@ startBtn.onclick = async () => {
   startBtn.disabled = true;
   await roomRef.set({ status: 'countdown', currentShot: 1 }, { merge: true });
 
-  // Host drives advancing between shots. Each shot takes ~4.2s
-  // (3s countdown + flash + buffer) before moving to the next one.
   const SHOT_DURATION_MS = 4200;
   let shot = 1;
   const interval = setInterval(async () => {
@@ -232,8 +237,6 @@ function runCountdownAndCapture(shotIndex) {
   }, 1000);
 }
 
-// Mimics CSS object-fit: cover -- crops the source to match the
-// destination's aspect ratio instead of stretching/distorting it.
 function getCoverCropDims(srcW, srcH, destW, destH) {
   if (!srcW || !srcH) return null;
   const srcAspect = srcW / srcH;
@@ -247,10 +250,6 @@ function getCoverCropDims(srcW, srcH, destW, destH) {
   return { sx, sy, sw, sh };
 }
 
-function getCoverCrop(video, destW, destH) {
-  return getCoverCropDims(video.videoWidth, video.videoHeight, destW, destH);
-}
-
 function loadImage(src) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -259,70 +258,60 @@ function loadImage(src) {
   });
 }
 
-function buildCompositeFrame() {
+// Captures each participant's tile as its OWN separate image (a "layer"),
+// instead of merging everyone into one flat picture. This is what lets
+// each person be cropped/repositioned independently afterward.
+function captureShotLayers() {
   const tiles = [...videoGrid.querySelectorAll('.video-tile')];
-  const cols = Math.ceil(Math.sqrt(tiles.length));
-  const rows = Math.ceil(tiles.length / cols);
-  const cellW = 320, cellH = 240;
+  const layers = [];
 
-  const canvas = document.getElementById('captureCanvas');
-  canvas.width = cols * cellW;
-  canvas.height = rows * cellH;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  tiles.forEach((tile, i) => {
+  tiles.forEach((tile) => {
     const video = tile.querySelector('video');
     if (!video || video.readyState < 2) return;
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = col * cellW, y = row * cellH;
 
-    const crop = getCoverCrop(video, cellW, cellH);
+    const isLocal = tile.classList.contains('local');
+    // Capture closer to the source's natural shape (portrait vs landscape)
+    // instead of always forcing 4:3 -- keeps more of the original frame
+    // instead of over-cropping right away.
+    const portrait = video.videoWidth < video.videoHeight;
+    const bufW = portrait ? 240 : 320;
+    const bufH = portrait ? 320 : 240;
+
+    const canvas = document.createElement('canvas');
+    const rotated90 = isLocal && (localRotation === 90 || localRotation === 270);
+    canvas.width = rotated90 ? bufH : bufW;
+    canvas.height = rotated90 ? bufW : bufH;
+    const ctx = canvas.getContext('2d');
+
+    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, bufW, bufH);
     if (!crop) return;
 
     ctx.save();
-    if (tile.classList.contains('local')) {
-      ctx.translate(x + cellW, y);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cellW, cellH);
+    if (isLocal) {
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((localRotation * Math.PI) / 180);
+      if (mirrorLocal) ctx.scale(-1, 1);
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -bufW / 2, -bufH / 2, bufW, bufH);
     } else {
-      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, x, y, cellW, cellH);
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, bufW, bufH);
     }
     ctx.restore();
+
+    layers.push({ src: canvas.toDataURL('image/png') });
   });
 
-  return canvas.toDataURL('image/png');
+  return { layers };
 }
 
 function captureFrame() {
-  capturedShots.push(buildCompositeFrame());
+  capturedShots.push(captureShotLayers());
 }
 
 // ---------- Frames (default themed + admin-uploaded) ----------
 const THEMED_BORDERS = [
-  {
-    id: 'flower',
-    label: 'Flower',
-    swatchBg: 'linear-gradient(135deg, #F3D9E4, #FBF7EE)',
-    bg: '#FBF0F3', frame: '#C97FA0', caption: '#6B3B52',
-    emojis: ['🌸', '🌷', '🌼']
-  },
-  {
-    id: 'strawberry',
-    label: 'Strawberry',
-    swatchBg: 'linear-gradient(135deg, #F7D6D0, #FBF7EE)',
-    bg: '#FDF1EE', frame: '#C9503E', caption: '#7A2E22',
-    emojis: ['🍓', '🍃', '🍓']
-  },
-  {
-    id: 'space',
-    label: 'Space',
-    swatchBg: 'linear-gradient(135deg, #2B2A4A, #4B4B7A)',
-    bg: '#20203A', frame: '#8C8CC4', caption: '#F2EADC',
-    emojis: ['✨', '🌙', '⭐']
-  }
+  { id: 'flower', label: 'Flower', bg: '#FBF0F3', frame: '#C97FA0', caption: '#6B3B52', emojis: ['🌸', '🌷', '🌼'] },
+  { id: 'strawberry', label: 'Strawberry', bg: '#FDF1EE', frame: '#C9503E', caption: '#7A2E22', emojis: ['🍓', '🍃', '🍓'] },
+  { id: 'space', label: 'Space', bg: '#20203A', frame: '#8C8CC4', caption: '#F2EADC', emojis: ['✨', '🌙', '⭐'] }
 ];
 
 function drawThemedBorder(theme, ctx, width, height) {
@@ -374,6 +363,15 @@ function stripLayout(count) {
   return { width, height, padding, photoW, photoH, gap, shotRects };
 }
 
+function layerRectsForShot(shotX, shotY, photoW, photoH, layerCount) {
+  const rects = [];
+  const w = photoW / Math.max(1, layerCount);
+  for (let j = 0; j < layerCount; j++) {
+    rects.push({ x: shotX + w * j, y: shotY, w, h: photoH });
+  }
+  return rects;
+}
+
 // ---------- Results ----------
 async function showResults() {
   document.getElementById('roomView').style.display = 'none';
@@ -381,27 +379,32 @@ async function showResults() {
 
   await loadBorderOptions();
   await updatePreview();
-  updateEditButtonState();
 }
 
 async function loadBorderOptions() {
   const container = document.getElementById('borderOptions');
   container.innerHTML = '';
 
-  const makeSwatchWrap = (labelText) => {
+  const makeWrap = (labelText) => {
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:flex; flex-direction:column; align-items:center; gap:5px;';
+    wrap.className = 'frame-swatch-wrap';
     const label = document.createElement('span');
+    label.className = 'frame-swatch-label';
     label.textContent = labelText;
-    label.style.cssText = 'font-size:0.72rem; color:var(--ink-soft); text-align:center;';
     return { wrap, label };
   };
 
   THEMED_BORDERS.forEach(b => {
-    const { wrap, label } = makeSwatchWrap(b.label);
+    const { wrap, label } = makeWrap(b.label);
     const swatch = document.createElement('div');
     swatch.className = 'border-swatch' + (selectedBorder.type === 'builtin' && selectedBorder.id === b.id ? ' selected' : '');
-    swatch.style.background = b.swatchBg;
+
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.width = 120;
+    previewCanvas.height = 160;
+    drawThemedBorder(b, previewCanvas.getContext('2d'), 120, 160);
+    swatch.style.backgroundImage = `url(${previewCanvas.toDataURL('image/png')})`;
+
     swatch.onclick = () => {
       selectedBorder = { type: 'builtin', id: b.id };
       [...container.children].forEach(c => c.querySelector('.border-swatch').classList.remove('selected'));
@@ -417,10 +420,10 @@ async function loadBorderOptions() {
     const bordersSnap = await db.collection('borders').where('shotCount', '==', shotCount).get();
     bordersSnap.forEach(doc => {
       const data = doc.data();
-      const { wrap, label } = makeSwatchWrap(data.name || 'Frame');
+      const { wrap, label } = makeWrap(data.name || 'Frame');
       const swatch = document.createElement('div');
       swatch.className = 'border-swatch';
-      swatch.innerHTML = `<img src="${data.dataUrl}" alt="${data.name || 'frame'}">`;
+      swatch.style.backgroundImage = `url(${data.dataUrl})`;
       swatch.onclick = () => {
         selectedBorder = { type: 'image', dataUrl: data.dataUrl };
         [...container.children].forEach(c => c.querySelector('.border-swatch').classList.remove('selected'));
@@ -441,8 +444,20 @@ async function updatePreview() {
   document.getElementById('previewImg').src = canvas.toDataURL('image/png');
 }
 
-// Renders the full strip -- frame, per-shot crops, ink layer, and any
-// text/photo objects -- reflecting whatever was last saved in the editor.
+function applyLayerTransform(ctx, img, crop, destRect) {
+  const rotation = crop.rotation || 0;
+  const flipX = !!crop.flipX;
+  ctx.save();
+  ctx.translate(destRect.x + destRect.w / 2, destRect.y + destRect.h / 2);
+  ctx.rotate((rotation * Math.PI) / 180);
+  if (flipX) ctx.scale(-1, 1);
+  const swapped = rotation === 90 || rotation === 270;
+  const drawW = swapped ? destRect.h : destRect.w;
+  const drawH = swapped ? destRect.w : destRect.h;
+  ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, -drawW / 2, -drawH / 2, drawW, drawH);
+  ctx.restore();
+}
+
 async function renderFinalStrip() {
   await document.fonts.ready;
 
@@ -460,17 +475,21 @@ async function renderFinalStrip() {
     renderer(ctx, layout.width, layout.height);
   }
 
-  if (capturedShots.length > 0) {
-    const shotImgs = await Promise.all(capturedShots.map(loadImage));
-    shotImgs.forEach((img, i) => {
-      const rect = layout.shotRects[i];
-      let crop = editState.shotCrops && editState.shotCrops[i];
+  for (let i = 0; i < capturedShots.length; i++) {
+    const shot = capturedShots[i];
+    const pos = (editState.shotPositions && editState.shotPositions[i]) || { x: layout.shotRects[i].x, y: layout.shotRects[i].y };
+    const layerRects = layerRectsForShot(pos.x, pos.y, layout.photoW, layout.photoH, shot.layers.length);
+
+    for (let j = 0; j < shot.layers.length; j++) {
+      const img = await loadImage(shot.layers[j].src);
+      const rect = layerRects[j];
+      let crop = editState.shotCrops && editState.shotCrops[i] && editState.shotCrops[i][j];
       if (!crop) {
         const c = getCoverCropDims(img.naturalWidth, img.naturalHeight, rect.w, rect.h);
-        crop = { x: c.sx, y: c.sy, w: c.sw, h: c.sh };
+        crop = { x: c.sx, y: c.sy, w: c.sw, h: c.sh, rotation: 0, flipX: false };
       }
-      ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, rect.x, rect.y, rect.w, rect.h);
-    });
+      applyLayerTransform(ctx, img, crop, rect);
+    }
   }
 
   if (editState.actions && editState.actions.length) {
@@ -512,17 +531,13 @@ async function renderFinalStrip() {
 
 // ---------- Editor ----------
 document.getElementById('openEditorBtn').onclick = async () => {
-  if (!canEdit()) {
-    await UIDialog.alert('The host hasn\'t allowed guests to edit yet.');
-    return;
-  }
-
   const layout = stripLayout(capturedShots.length);
   const frameRenderer = await getFrameRenderer();
 
   PhotoEditor.openStrip({
     shots: capturedShots,
-    shotRects: layout.shotRects,
+    defaultShotPositions: layout.shotRects.map(r => ({ x: r.x, y: r.y })),
+    shotSize: { w: layout.photoW, h: layout.photoH },
     width: layout.width,
     height: layout.height,
     frameRenderer,
@@ -549,8 +564,6 @@ document.getElementById('downloadBtn').onclick = async () => {
     link.href = pngDataUrl;
     link.click();
 
-    // Smaller, compressed JPEG for the Firestore gallery copy, since
-    // Firestore documents cap out at 1MB.
     const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.6);
 
     if (jpegDataUrl.length > 700000) {

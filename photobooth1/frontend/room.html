@@ -32,6 +32,8 @@
   <div class="mic-row">
     <button class="btn-icon" id="micBtn" title="Enable microphone">🎙️</button>
     <span id="micStatus">Tap to enable mic</span>
+    <button class="btn-icon" id="mirrorBtn" title="Flip my camera horizontally">🔁</button>
+    <button class="btn-icon" id="rotateBtn" title="Rotate my camera">↻</button>
   </div>
   <button class="btn btn-ghost" id="leaveBtn">Leave Room</button>
 </div>
@@ -64,11 +66,6 @@
         </div>
       </div>
 
-      <div id="guestEditToggleWrap" style="display:none;">
-        <label class="field-label">Allow guests to edit the strip</label>
-        <button class="tool-btn" id="guestEditToggle">Off</button>
-      </div>
-
       <button class="btn btn-primary" id="startBtn" style="width:100%;">Start</button>
       <p style="font-size:0.8rem; color:var(--ink-soft); margin:0;" id="hostHint"></p>
     </div>
@@ -94,8 +91,8 @@
       <div class="border-options" id="borderOptions"></div>
 
       <h3 style="font-size:1.1rem; margin-top:24px;">Edit custom frame</h3>
-      <p style="font-size:0.85rem; margin-top:-6px;" id="editPermissionHint">
-        Reposition photos, draw, add text or images, or upload your own frame.
+      <p style="font-size:0.85rem; margin-top:-6px;">
+        Drag a photo to move it, use Crop to adjust what's shown, draw, add text or images, or upload your own frame. You and your partner can each edit your own copy.
       </p>
       <button class="btn btn-secondary" id="openEditorBtn" style="width:100%;">Open editor</button>
     </div>
@@ -110,7 +107,8 @@
 <div class="editor-overlay" id="editorOverlay">
   <div class="editor-modal">
     <div class="editor-toolbar" id="editorToolbar">
-      <button class="tool-btn selected" data-tool="move" title="Click a photo to reposition it">✋ Move</button>
+      <button class="tool-btn selected" data-tool="move" title="Drag a photo to reposition it in the strip">✋ Move</button>
+      <button class="tool-btn" data-tool="crop" title="Drag inside a photo to pan/crop it">⤢ Crop</button>
       <button class="tool-btn" data-tool="draw">✏️ Draw</button>
       <button class="tool-btn" data-tool="erase">🧽 Erase</button>
       <button class="tool-btn" data-tool="text">🔤 Add text</button>
@@ -129,10 +127,11 @@
           <option value="'Work Sans', sans-serif">Work Sans</option>
           <option value="'Fraunces', serif">Fraunces</option>
           <option value="'IBM Plex Mono', monospace">Plex Mono</option>
-          <option value="Georgia, serif">Georgia</option>
-          <option value="'Comic Sans MS', cursive">Comic Sans</option>
+          <option value="'Caveat', cursive">Handwritten</option>
         </select>
       </label>
+      <button class="tool-btn" id="editorRotateLayerBtn" style="display:none;">↻ Rotate photo</button>
+      <button class="tool-btn" id="editorFlipLayerBtn" style="display:none;">🔁 Flip photo</button>
       <button class="tool-btn" id="editorDeleteBtn" style="display:none;">🗑️ Delete selected</button>
       <label class="tool-btn" id="editorFrameUploadLabel" style="cursor:pointer;">
         Upload custom frame
