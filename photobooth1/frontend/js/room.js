@@ -113,7 +113,7 @@ let localRotation = 0; // 0, 90, 180, 270
 
 function applyLocalVideoTransform() {
   const el = document.getElementById('localVideo');
-  el.style.transform = `rotate(${localRotation}deg) scaleX(${mirrorLocal ? -1 : 1})`;
+  el.style.transform = `rotate(${localRotation}deg) scaleX(${mirrorLocal ? -1 : -1})`;
 }
 applyLocalVideoTransform();
 
