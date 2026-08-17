@@ -39,18 +39,18 @@ const joinModal = document.getElementById('joinModal');
 const joinError = document.getElementById('joinError');
 
 document.getElementById('joinOpenBtn').onclick = () => {
-  joinModal.classList.add('open');
+  joinModal.classList.add('open'); document.body.classList.add('scroll-locked');
   document.getElementById('joinCodeInput').focus();
 };
 
 document.getElementById('joinCloseBtn').onclick = () => {
-  joinModal.classList.remove('open');
+  joinModal.classList.remove('open'); document.body.classList.remove('scroll-locked');
   joinError.style.display = 'none';
 };
 
 joinModal.addEventListener('click', (e) => {
   if (e.target === joinModal) {
-    joinModal.classList.remove('open');
+    joinModal.classList.remove('open'); document.body.classList.remove('scroll-locked');
     joinError.style.display = 'none';
   }
 });

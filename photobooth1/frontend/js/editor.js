@@ -426,8 +426,13 @@ const PhotoEditor = (() => {
     if (dragMode === 'object-resize') {
       const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
       if (dragTarget.type === 'image') {
-        dragTarget.w = Math.max(24, dragTarget.w + dx);
-        dragTarget.h = Math.max(24, dragTarget.h + dy);
+        // Preserve the image's own aspect ratio -- drive the resize off
+        // whichever axis moved more, deriving the other from that ratio,
+        // instead of letting w/h drift independently (which stretches it).
+        const aspect = dragTarget.img ? dragTarget.img.naturalWidth / dragTarget.img.naturalHeight : dragTarget.w / dragTarget.h;
+        const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy * aspect;
+        dragTarget.w = Math.max(24, dragTarget.w + delta);
+        dragTarget.h = Math.max(24 / aspect, dragTarget.w / aspect);
       } else {
         const diag = Math.hypot(dx, dy) * (dx + dy >= 0 ? 1 : -1);
         dragTarget.h = Math.max(12, dragTarget.h + diag * 0.5);
@@ -515,12 +520,13 @@ const PhotoEditor = (() => {
 
   function startTextEdit(obj) {
     const rect = canvas.getBoundingClientRect();
-    const scale = rect.width / canvas.width;
+    const scaleX = rect.width / canvas.width;
+    const scaleY = rect.height / canvas.height;
     if (textEditEl) textEditEl.remove();
     textEditEl = document.createElement('textarea');
     textEditEl.value = obj.text;
     textEditEl.spellcheck = false;
-    textEditEl.style.cssText = `position: fixed; left:${rect.left + obj.x * scale}px; top:${rect.top + obj.y * scale}px; font: 600 ${obj.h * scale}px ${obj.font}; color:${obj.color}; border:2px solid #A5502E; border-radius:6px; background: rgba(255,255,255,0.95); z-index: 300; padding:4px 6px; min-width: 100px; resize: both; line-height:1.2;`;
+    textEditEl.style.cssText = `position: fixed; left:${rect.left + obj.x * scaleX}px; top:${rect.top + obj.y * scaleY}px; font: 600 ${obj.h * scaleY}px ${obj.font}; color:${obj.color}; border:2px solid #A5502E; border-radius:6px; background: rgba(255,255,255,0.95); z-index: 300; padding:4px 6px; min-width: 100px; resize: both; line-height:1.2;`;
     document.body.appendChild(textEditEl);
     textEditEl.focus();
     textEditEl.select();
@@ -757,7 +763,7 @@ const PhotoEditor = (() => {
     };
     img.src = imageSrc;
 
-    overlay.classList.add('open');
+    overlay.classList.add('open'); document.body.classList.add('scroll-locked');
   }
 
   function openStrip({ shots: shotSrcs, defaultShotPositions, shotSize: sSize, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
@@ -822,7 +828,7 @@ const PhotoEditor = (() => {
       objects = restoredObjMeta.map(o => o.type === 'image' ? { ...o, img: imgCache[o.imgSrc] } : { ...o });
       activeLayerRef = shots.length ? { shotIdx: 0, layerIdx: 0 } : null;
 
-      const afterFrame = () => { renderInkLayer(); render(); updateContextControls(); overlay.classList.add('open'); };
+      const afterFrame = () => { renderInkLayer(); render(); updateContextControls(); overlay.classList.add('open'); document.body.classList.add('scroll-locked'); };
 
       if (initialState && initialState.customFrameSrc) {
         const cf = new Image();
@@ -848,6 +854,7 @@ const PhotoEditor = (() => {
 
   function close() {
     overlay.classList.remove('open');
+    document.body.classList.remove('scroll-locked');
     if (textEditEl) { textEditEl.remove(); textEditEl = null; }
   }
 

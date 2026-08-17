@@ -260,6 +260,9 @@ a { color: inherit; }
   padding: 32px;
   width: 100%;
   max-width: 380px;
+  max-height: 85vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: relative;
   box-shadow: var(--shadow);
   transform: translateY(10px) scale(0.98);
@@ -571,6 +574,11 @@ input[type="text"]:focus, input[type="password"]:focus {
 }
 .editor-overlay.open { opacity: 1; pointer-events: auto; }
 
+body.scroll-locked {
+  overflow: hidden;
+  touch-action: none;
+}
+
 .editor-modal {
   background: var(--surface);
   border-radius: var(--radius);
@@ -579,6 +587,7 @@ input[type="text"]:focus, input[type="password"]:focus {
   width: 100%;
   max-height: 92vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
@@ -589,6 +598,7 @@ input[type="text"]:focus, input[type="password"]:focus {
 .editor-canvas-wrap {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   background: var(--ink);
   border-radius: var(--radius-sm);
   padding: 14px;

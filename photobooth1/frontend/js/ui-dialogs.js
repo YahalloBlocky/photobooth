@@ -37,10 +37,12 @@ const UIDialog = (() => {
       document.getElementById('uiDialogCancel').style.display = showCancel ? 'inline-flex' : 'none';
 
       overlay.classList.add('open');
+      document.body.classList.add('scroll-locked');
       if (showInput) setTimeout(() => input.focus(), 50);
 
       const cleanup = (result) => {
         overlay.classList.remove('open');
+        document.body.classList.remove('scroll-locked');
         okBtn.removeEventListener('click', onOk);
         cancelBtn.removeEventListener('click', onCancel);
         closeBtn.removeEventListener('click', onCancel);

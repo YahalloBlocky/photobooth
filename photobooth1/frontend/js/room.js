@@ -259,19 +259,17 @@ function loadImage(src) {
   });
 }
 
-// Captures each participant's tile as its OWN separate image (a "layer"),
-// instead of merging everyone into one flat picture. This is what lets
-// each person be cropped/repositioned independently afterward.
-//
-// The capture buffer's shape is matched to how the layer will actually be
-// displayed (a slot photoW/N wide by photoH tall, where N = number of
-// people in the shot) rather than always assuming 4:3 -- this means far
-// less gets cropped away by default, since the raw capture already roughly
-// matches its eventual slot instead of needing a tight re-crop afterward.
+// Fixed capture shape, the same on every device and regardless of how
+// many people are in the shot. A portrait-leaning ratio since a shot
+// often ends up split into narrow per-person columns anyway -- cover-crop
+// at render time fits this into whatever slot shape it actually needs,
+// so a single consistent source shape is simpler and more predictable
+// than trying to guess the ideal shape per participant count.
+const CAPTURE_W = 360;
+const CAPTURE_H = 480;
+
 function captureShotLayers() {
   const tiles = [...videoGrid.querySelectorAll('.video-tile')];
-  const layout = stripLayout(shotCount);
-  const slotAspect = (layout.photoW / Math.max(1, tiles.length)) / layout.photoH;
   const layers = [];
 
   tiles.forEach((tile) => {
@@ -284,25 +282,20 @@ function captureShotLayers() {
       ? { mirrored: myMirrored, rotation: myRotation }
       : (participantTransforms[tilePeerId] || { mirrored: true, rotation: 0 });
 
-    // Base buffer size targets the slot's aspect ratio directly, at a
-    // reasonable resolution.
-    const baseH = 360;
-    const baseW = Math.round(baseH * slotAspect);
-
     const rotated90 = transform.rotation === 90 || transform.rotation === 270;
     const canvas = document.createElement('canvas');
-    canvas.width = rotated90 ? baseH : baseW;
-    canvas.height = rotated90 ? baseW : baseH;
+    canvas.width = rotated90 ? CAPTURE_H : CAPTURE_W;
+    canvas.height = rotated90 ? CAPTURE_W : CAPTURE_H;
     const ctx = canvas.getContext('2d');
 
-    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, baseW, baseH);
+    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, CAPTURE_W, CAPTURE_H);
     if (!crop) return;
 
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((transform.rotation * Math.PI) / 180);
     if (transform.mirrored) ctx.scale(-1, 1);
-    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -baseW / 2, -baseH / 2, baseW, baseH);
+    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -CAPTURE_W / 2, -CAPTURE_H / 2, CAPTURE_W, CAPTURE_H);
     ctx.restore();
 
     layers.push({ src: canvas.toDataURL('image/png') });
