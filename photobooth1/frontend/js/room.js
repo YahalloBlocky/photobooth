@@ -98,11 +98,11 @@ let myRotation = 0;
 const participantTransforms = {}; // peerId -> { mirrored, rotation }
 
 function applyTransformToTile(targetPeerId, { mirrored, rotation }) {
-  const videoEl = targetPeerId === peerId
-    ? document.getElementById('localVideo')
-    : document.querySelector(`#tile-${targetPeerId} video`);
-  if (!videoEl) return;
-  videoEl.style.transform = `rotate(${rotation}deg) scaleX(${mirrored ? -1 : 1})`;
+  const wrap = targetPeerId === peerId
+    ? document.getElementById('localVideo').closest('.video-transform-wrap')
+    : document.querySelector(`#tile-${targetPeerId} .video-transform-wrap`);
+  if (!wrap) return;
+  wrap.style.transform = `rotate(${rotation}deg) scaleX(${mirrored ? -1 : 1})`;
 }
 
 document.getElementById('mirrorBtn').onclick = () => {
@@ -127,7 +127,7 @@ const mesh = new MeshRoom(roomCode, peerId, {
       tile.className = 'video-tile';
       tile.id = 'tile-' + otherId;
       tile.dataset.peerId = otherId;
-      tile.innerHTML = `<video autoplay playsinline></video><span class="tag">Partner</span>`;
+      tile.innerHTML = `<div class="video-transform-wrap"><video autoplay playsinline></video></div><span class="tag">Partner</span>`;
       videoGrid.appendChild(tile);
       // Apply this peer's known transform (if we already have it) to the new tile
       if (participantTransforms[otherId]) applyTransformToTile(otherId, participantTransforms[otherId]);

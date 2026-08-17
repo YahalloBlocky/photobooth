@@ -388,6 +388,11 @@ input[type="text"]:focus, input[type="password"]:focus {
   background: #000;
 }
 
+.video-transform-wrap {
+  width: 100%;
+  height: 100%;
+}
+
 /* Note: mirroring is applied per-tile via inline JS transforms (synced
    through Firestore per-person), not a static CSS rule -- see room.js */
 

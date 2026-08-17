@@ -34,12 +34,13 @@ const RTC_SERVERS = {
 };
 
 class MeshRoom {
-  constructor(roomCode, myPeerId, { onRemoteStream, onRemoteLeave, onParticipantTransform } = {}) {
+  constructor(roomCode, myPeerId, { onRemoteStream, onRemoteLeave, onParticipantTransform, onConnectionStateChange } = {}) {
     this.roomCode = roomCode;
     this.myPeerId = myPeerId;
     this.onRemoteStream = onRemoteStream || (() => {});
     this.onRemoteLeave = onRemoteLeave || (() => {});
     this.onParticipantTransform = onParticipantTransform || (() => {});
+    this.onConnectionStateChange = onConnectionStateChange || (() => {});
     this.localStream = null;
     this.hasAudio = false;
     this.peerConnections = {}; // otherId -> RTCPeerConnection
