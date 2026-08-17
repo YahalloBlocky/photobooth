@@ -1,173 +1,181 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Room — Photogether</title>
-<link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Room — Photogether</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/png" href="photogetherlogo.png">
 </head>
+
 <body>
 
-<header class="navbar">
-  <a href="index.html" class="brand">
-    <img src="photogetherlogo.png" alt="Photogether logo" class="logo-img">
-    Photogether
-  </a>
-  <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
-  <nav id="mainNav">
-    <a href="index.html">Home</a>
-    <a href="about.html">About</a>
-    <a href="contact.html">Contact</a>
-    <a href="admin.html">Admin</a>
-  </nav>
-</header>
+  <header class="navbar">
+    <a href="index.html" class="brand">
+      <img src="photogetherlogo.png" alt="Photogether logo" class="logo-img">
+      Photogether
+    </a>
+    <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">☰</button>
+    <nav id="mainNav">
+      <a href="index.html">Home</a>
+      <a href="about.html">About</a>
+      <a href="contact.html">Contact</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+  </header>
 
-<!-- Persistent bar: room code, role, mic, leave -- visible in every view -->
-<div class="room-code-banner">
-  Room code: <span id="roomCodeText">------</span>
-  <span class="role-badge" id="roleBadge">Guest</span>
-</div>
-
-<div class="persistent-controls">
-  <div class="mic-row">
-    <button class="btn-icon" id="micBtn" title="Enable microphone">🎙️</button>
-    <span id="micStatus">Tap to enable mic</span>
-    <button class="btn-icon" id="mirrorBtn" title="Flip my camera horizontally">🔁</button>
-    <button class="btn-icon" id="rotateBtn" title="Rotate my camera">↻</button>
+  <!-- Persistent bar: room code, role, mic, leave -- visible in every view -->
+  <div class="room-code-banner">
+    Room code: <span id="roomCodeText">------</span>
+    <span class="role-badge" id="roleBadge">Guest</span>
   </div>
-  <button class="btn btn-ghost" id="leaveBtn">Leave Room</button>
-</div>
 
-<!-- LOBBY / CAPTURE VIEW -->
-<div id="roomView">
-  <div class="room-layout">
-    <div>
-      <div class="stage">
-        <div class="countdown-overlay" id="countdownOverlay">
-          <div class="countdown-number" id="countdownNumber">3</div>
-        </div>
-        <div class="flash-overlay" id="flashOverlay"></div>
-        <div class="video-grid" id="videoGrid">
-          <div class="video-tile local">
-            <div class="video-transform-wrap">
-              <video id="localVideo" autoplay playsinline muted></video>
+  <div class="persistent-controls">
+    <div class="mic-row">
+      <button class="btn-icon" id="micBtn" title="Enable microphone">🎙️</button>
+      <span id="micStatus">Tap to enable mic</span>
+      <button class="btn-icon" id="mirrorBtn" title="Flip my camera horizontally">🔁</button>
+      <button class="btn-icon" id="rotateBtn" title="Rotate my camera">↻</button>
+    </div>
+    <button class="btn btn-ghost" id="leaveBtn">Leave Room</button>
+  </div>
+
+  <!-- LOBBY / CAPTURE VIEW -->
+  <div id="roomView">
+    <div class="room-layout">
+      <div>
+        <div class="stage">
+          <div class="countdown-overlay" id="countdownOverlay">
+            <div class="countdown-number" id="countdownNumber">3</div>
+          </div>
+          <div class="flash-overlay" id="flashOverlay"></div>
+          <div class="video-grid" id="videoGrid">
+            <div class="video-tile local">
+              <div class="video-transform-wrap">
+                <video id="localVideo" autoplay playsinline muted></video>
+              </div>
+              <span class="tag">You</span>
             </div>
-            <span class="tag">You</span>
           </div>
         </div>
+
+        <p class="status-line" id="statusLine">Connecting…</p>
       </div>
 
-      <p class="status-line" id="statusLine">Connecting…</p>
-    </div>
+      <div class="side-panel card">
+        <div>
+          <label class="field-label">Number of shots</label>
+          <div class="shot-selector" id="shotSelector">
+            <!-- buttons injected by JS -->
+          </div>
+        </div>
 
-    <div class="side-panel card">
+        <button class="btn btn-primary" id="startBtn" style="width:100%;">Start</button>
+        <p style="font-size:0.8rem; color:var(--ink-soft); margin:0;" id="hostHint"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULTS VIEW -->
+  <div id="resultsView" style="display:none;">
+    <div class="results-wrap">
       <div>
-        <label class="field-label">Number of shots</label>
-        <div class="shot-selector" id="shotSelector">
-          <!-- buttons injected by JS -->
+        <div class="filmstrip" id="filmstrip">
+          <img id="previewImg" alt="Your photo strip preview">
+        </div>
+        <div class="button-row" style="margin-top:20px;">
+          <button class="btn btn-primary" id="downloadBtn">Save &amp; Download</button>
+          <button class="btn btn-ghost" id="retakeBtn">Retake all</button>
+        </div>
+        <p class="status-line" id="resultsStatus"></p>
+      </div>
+
+      <div class="card border-panel">
+        <h3 style="font-size:1.1rem;">Choose a frame</h3>
+        <div class="border-options" id="borderOptions"></div>
+
+        <h3 style="font-size:1.1rem; margin-top:24px;">Edit custom frame</h3>
+        <p style="font-size:0.85rem; margin-top:-6px;">
+          Drag a photo to move it, use Crop to adjust what's shown, draw, add text or images, or upload your own frame.
+          You and your partner can each edit your own copy.
+        </p>
+        <button class="btn btn-secondary" id="openEditorBtn" style="width:100%;">Open editor</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="captureCanvas" style="display:none;"></canvas>
+  <canvas id="stripCanvas" style="display:none;"></canvas>
+  <canvas id="inkLayerCanvas" style="display:none;"></canvas>
+
+  <!-- Photo editor modal -->
+  <div class="editor-overlay" id="editorOverlay">
+    <div class="editor-modal">
+      <p style="font-size:0.8rem; color:var(--ink-soft); margin:0;">
+        <strong>Move</strong> drags a whole photo around the strip. <strong>Crop</strong> lets you drag inside one
+        person's photo to adjust what's shown, plus rotate/flip/zoom it.
+      </p>
+      <div class="editor-toolbar" id="editorToolbar">
+        <button class="tool-btn selected" data-tool="move" title="Drag a photo to reposition it in the strip">✋
+          Move</button>
+        <button class="tool-btn" data-tool="crop" title="Drag inside a photo to pan/crop it">⤢ Crop</button>
+        <button class="tool-btn" data-tool="draw">✏️ Draw</button>
+        <button class="tool-btn" data-tool="erase">🧽 Erase</button>
+        <button class="tool-btn" data-tool="text">🔤 Add text</button>
+        <button class="tool-btn" data-tool="photo">🖼️ Add photo</button>
+        <span style="flex:1;"></span>
+        <button class="tool-btn" id="editorUndoBtn" title="Undo">↩ Undo</button>
+        <button class="tool-btn" id="editorRedoBtn" title="Redo">↪ Redo</button>
+        <button class="tool-btn" id="editorResetBtn" title="Reset everything">Reset</button>
+      </div>
+
+      <div class="editor-controls-row">
+        <label>Color <input type="color" id="editorColor" value="#a5502e"></label>
+        <label>Size <input type="range" id="editorSize" min="2" max="60" value="6"></label>
+        <label id="editorFontWrap">Font
+          <select id="editorFont">
+            <option value="'Work Sans', sans-serif">Work Sans</option>
+            <option value="'Fraunces', serif">Fraunces</option>
+            <option value="'IBM Plex Mono', monospace">Plex Mono</option>
+            <option value="'Caveat', cursive">Handwritten</option>
+          </select>
+        </label>
+        <button class="tool-btn" id="editorRotateLayerBtn" style="display:none;">↻ Rotate photo</button>
+        <button class="tool-btn" id="editorFlipLayerBtn" style="display:none;">🔁 Flip photo</button>
+        <label id="editorZoomWrap" style="display:none;">Zoom <input type="range" id="editorZoom" min="100" max="300"
+            value="100"></label>
+        <button class="tool-btn" id="editorDeleteBtn" style="display:none;">🗑️ Delete selected</button>
+        <label class="tool-btn" id="editorFrameUploadLabel" style="cursor:pointer;">
+          Upload custom frame
+          <input type="file" id="editorFrameUpload" accept="image/png" style="display:none;">
+        </label>
+      </div>
+
+      <div class="editor-canvas-wrap">
+        <canvas id="editorCanvas"></canvas>
+      </div>
+
+      <div class="editor-footer">
+        <span></span>
+        <div class="button-row">
+          <button class="btn btn-ghost" id="editorCancelBtn">Cancel</button>
+          <button class="btn btn-primary" id="editorSaveBtn">Save</button>
         </div>
       </div>
-
-      <button class="btn btn-primary" id="startBtn" style="width:100%;">Start</button>
-      <p style="font-size:0.8rem; color:var(--ink-soft); margin:0;" id="hostHint"></p>
     </div>
   </div>
-</div>
 
-<!-- RESULTS VIEW -->
-<div id="resultsView" style="display:none;">
-  <div class="results-wrap">
-    <div>
-      <div class="filmstrip" id="filmstrip">
-        <img id="previewImg" alt="Your photo strip preview">
-      </div>
-      <div class="button-row" style="margin-top:20px;">
-        <button class="btn btn-primary" id="downloadBtn">Save &amp; Download</button>
-        <button class="btn btn-ghost" id="retakeBtn">Retake all</button>
-      </div>
-      <p class="status-line" id="resultsStatus"></p>
-    </div>
-
-    <div class="card border-panel">
-      <h3 style="font-size:1.1rem;">Choose a frame</h3>
-      <div class="border-options" id="borderOptions"></div>
-
-      <h3 style="font-size:1.1rem; margin-top:24px;">Edit custom frame</h3>
-      <p style="font-size:0.85rem; margin-top:-6px;">
-        Drag a photo to move it, use Crop to adjust what's shown, draw, add text or images, or upload your own frame. You and your partner can each edit your own copy.
-      </p>
-      <button class="btn btn-secondary" id="openEditorBtn" style="width:100%;">Open editor</button>
-    </div>
-  </div>
-</div>
-
-<canvas id="captureCanvas" style="display:none;"></canvas>
-<canvas id="stripCanvas" style="display:none;"></canvas>
-<canvas id="inkLayerCanvas" style="display:none;"></canvas>
-
-<!-- Photo editor modal -->
-<div class="editor-overlay" id="editorOverlay">
-  <div class="editor-modal">
-    <p style="font-size:0.8rem; color:var(--ink-soft); margin:0;">
-      <strong>Move</strong> drags a whole photo around the strip. <strong>Crop</strong> lets you drag inside one person's photo to adjust what's shown, plus rotate/flip/zoom it.
-    </p>
-    <div class="editor-toolbar" id="editorToolbar">
-      <button class="tool-btn selected" data-tool="move" title="Drag a photo to reposition it in the strip">✋ Move</button>
-      <button class="tool-btn" data-tool="crop" title="Drag inside a photo to pan/crop it">⤢ Crop</button>
-      <button class="tool-btn" data-tool="draw">✏️ Draw</button>
-      <button class="tool-btn" data-tool="erase">🧽 Erase</button>
-      <button class="tool-btn" data-tool="text">🔤 Add text</button>
-      <button class="tool-btn" data-tool="photo">🖼️ Add photo</button>
-      <span style="flex:1;"></span>
-      <button class="tool-btn" id="editorUndoBtn" title="Undo">↩ Undo</button>
-      <button class="tool-btn" id="editorRedoBtn" title="Redo">↪ Redo</button>
-      <button class="tool-btn" id="editorResetBtn" title="Reset everything">Reset</button>
-    </div>
-
-    <div class="editor-controls-row">
-      <label>Color <input type="color" id="editorColor" value="#a5502e"></label>
-      <label>Size <input type="range" id="editorSize" min="2" max="60" value="6"></label>
-      <label id="editorFontWrap">Font
-        <select id="editorFont">
-          <option value="'Work Sans', sans-serif">Work Sans</option>
-          <option value="'Fraunces', serif">Fraunces</option>
-          <option value="'IBM Plex Mono', monospace">Plex Mono</option>
-          <option value="'Caveat', cursive">Handwritten</option>
-        </select>
-      </label>
-      <button class="tool-btn" id="editorRotateLayerBtn" style="display:none;">↻ Rotate photo</button>
-      <button class="tool-btn" id="editorFlipLayerBtn" style="display:none;">🔁 Flip photo</button>
-      <label id="editorZoomWrap" style="display:none;">Zoom <input type="range" id="editorZoom" min="100" max="300" value="100"></label>
-      <button class="tool-btn" id="editorDeleteBtn" style="display:none;">🗑️ Delete selected</button>
-      <label class="tool-btn" id="editorFrameUploadLabel" style="cursor:pointer;">
-        Upload custom frame
-        <input type="file" id="editorFrameUpload" accept="image/png" style="display:none;">
-      </label>
-    </div>
-
-    <div class="editor-canvas-wrap">
-      <canvas id="editorCanvas"></canvas>
-    </div>
-
-    <div class="editor-footer">
-      <span></span>
-      <div class="button-row">
-        <button class="btn btn-ghost" id="editorCancelBtn">Cancel</button>
-        <button class="btn btn-primary" id="editorSaveBtn">Save</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
-<script src="js/firebase-config.js"></script>
-<script src="js/cleanup.js"></script>
-<script src="js/ui-dialogs.js"></script>
-<script src="js/webrtc.js"></script>
-<script src="js/editor.js"></script>
-<script src="js/room.js"></script>
-<script src="js/nav.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
+  <script src="js/cleanup.js"></script>
+  <script src="js/ui-dialogs.js"></script>
+  <script src="js/webrtc.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/room.js"></script>
+  <script src="js/nav.js"></script>
 
 </body>
+
 </html>
