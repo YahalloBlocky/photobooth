@@ -144,7 +144,7 @@ const PhotoEditor = (() => {
     } else {
       sw = srcW; sh = srcW / destAspect; sx = 0; sy = (srcH - sh) / 2;
     }
-    return { x: sx, y: sy, w: sw, h: sh, rotation: 0, flipX: false };
+    return { x: sx, y: sy, w: sw, h: sh, rotation: 0, flipX: false, baseW: sw, baseH: sh };
   }
 
   function clampCrop(crop, img) {
@@ -558,20 +558,49 @@ const PhotoEditor = (() => {
     render();
   }
 
+  // Actual zoom (not just panning) -- shrinks/grows the crop window around
+  // its current center, clamped so it never exceeds the source image.
+  function setActiveLayerZoom(zoomPct) {
+    const crop = mode === 'flat' ? flatCrop : (activeLayerRef && layerCrops[activeLayerRef.shotIdx][activeLayerRef.layerIdx]);
+    if (!crop || !crop.baseW) return;
+    const img = mode === 'flat' ? flatImg : (activeLayerRef && shots[activeLayerRef.shotIdx].layers[activeLayerRef.layerIdx].img);
+    if (!img) return;
+
+    const factor = Math.max(1, zoomPct / 100);
+    const cx = crop.x + crop.w / 2;
+    const cy = crop.y + crop.h / 2;
+    crop.w = crop.baseW / factor;
+    crop.h = crop.baseH / factor;
+    crop.x = cx - crop.w / 2;
+    crop.y = cy - crop.h / 2;
+    clampCrop(crop, img);
+    render();
+  }
+
   function updateContextControls() {
     const deleteBtn = document.getElementById('editorDeleteBtn');
     const fontWrap = document.getElementById('editorFontWrap');
     const rotateBtn = document.getElementById('editorRotateLayerBtn');
     const flipBtn = document.getElementById('editorFlipLayerBtn');
+    const zoomWrap = document.getElementById('editorZoomWrap');
+    const zoomSlider = document.getElementById('editorZoom');
     const selectedObj = objects.find(o => o.id === selectedId);
 
     deleteBtn.style.display = selectedObj ? 'inline-flex' : 'none';
     fontWrap.style.display = (selectedObj && selectedObj.type === 'text') ? 'inline-flex' : 'none';
 
-    if (rotateBtn && flipBtn) {
-      const showLayerControls = mode === 'flat' || currentTool === 'crop';
-      rotateBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
-      flipBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
+    const showLayerControls = mode === 'flat' || currentTool === 'crop';
+    if (rotateBtn) rotateBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
+    if (flipBtn) flipBtn.style.display = showLayerControls ? 'inline-flex' : 'none';
+    if (zoomWrap) {
+      zoomWrap.style.display = showLayerControls ? 'inline-flex' : 'none';
+      if (showLayerControls && zoomSlider) {
+        const crop = mode === 'flat' ? flatCrop : (activeLayerRef && layerCrops[activeLayerRef.shotIdx][activeLayerRef.layerIdx]);
+        if (crop && crop.baseW) {
+          const currentZoom = Math.round((crop.baseW / crop.w) * 100);
+          zoomSlider.value = Math.min(300, Math.max(100, currentZoom));
+        }
+      }
     }
 
     if (selectedObj && selectedObj.type === 'text') {
@@ -614,6 +643,16 @@ const PhotoEditor = (() => {
     const flipBtn = document.getElementById('editorFlipLayerBtn');
     if (rotateBtn) rotateBtn.addEventListener('click', rotateActiveLayer);
     if (flipBtn) flipBtn.addEventListener('click', flipActiveLayer);
+
+    const zoomSlider = document.getElementById('editorZoom');
+    if (zoomSlider) {
+      let zoomHistoryPushed = false;
+      zoomSlider.addEventListener('input', () => {
+        if (!zoomHistoryPushed) { pushHistory(); zoomHistoryPushed = true; }
+        setActiveLayerZoom(Number(zoomSlider.value));
+      });
+      zoomSlider.addEventListener('change', () => { zoomHistoryPushed = false; });
+    }
 
     document.getElementById('editorResetBtn').addEventListener('click', async () => {
       const ok = await UIDialog.confirm('Reset all edits? This clears drawings, text, images, and any repositioning or cropping.');

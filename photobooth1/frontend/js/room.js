@@ -54,81 +54,70 @@ function updateShotSelectorUI() {
 }
 
 // ---------- Mic ----------
-let micState = 'not-requested'; // 'not-requested' | 'on' | 'off'
+// Camera + mic are requested together when joining (see webrtc.js), so
+// there's no risky mid-call track-adding step. If mic was denied/blocked
+// at join, it stays unavailable for this session -- rejoining is the only
+// way to retry, since hot-adding audio to a live connection turned out to
+// be unreliable (this is a deliberate simplification, not an oversight).
+let micOn = false;
 const micBtn = document.getElementById('micBtn');
-micBtn.classList.remove('active');
 
-micBtn.onclick = async () => {
-  if (micState === 'not-requested') {
+function initMicUI() {
+  if (mesh.hasAudio) {
+    micOn = true;
+    micBtn.classList.add('active');
+    micBtn.textContent = '🎤';
+    document.getElementById('micStatus').textContent = 'Mic on';
+    micBtn.disabled = false;
+  } else {
+    micBtn.classList.add('muted');
+    micBtn.textContent = '🔇';
     micBtn.disabled = true;
-    document.getElementById('micStatus').textContent = 'Requesting mic…';
-
-    // If the browser can tell us the mic is already hard-blocked for this
-    // site, say so clearly -- calling getUserMedia again won't re-show the
-    // permission prompt once a person has explicitly denied it; only
-    // changing it in the browser's site settings will.
-    try {
-      if (navigator.permissions && navigator.permissions.query) {
-        const status = await navigator.permissions.query({ name: 'microphone' });
-        if (status.state === 'denied') {
-          document.getElementById('micStatus').textContent = 'Mic blocked — enable it in your browser\'s site settings, then reload.';
-          micBtn.disabled = false;
-          return;
-        }
-      }
-    } catch (e) { /* permissions API not supported here, fall through and just try */ }
-
-    try {
-      await mesh.enableMic();
-      micState = 'on';
-      micBtn.classList.add('active');
-      micBtn.textContent = '🎤';
-      document.getElementById('micStatus').textContent = 'Mic on';
-    } catch (err) {
-      console.error(err);
-      document.getElementById('micStatus').textContent = 'Mic permission denied — tap again to retry, or check site settings.';
-    } finally {
-      micBtn.disabled = false;
-    }
-    return;
+    document.getElementById('micStatus').textContent = 'Mic unavailable — rejoin the room to enable it';
   }
+}
 
-  const turningOn = micState === 'off';
-  mesh.setMicEnabled(turningOn);
-  micState = turningOn ? 'on' : 'off';
-  micBtn.classList.toggle('active', turningOn);
-  micBtn.classList.toggle('muted', !turningOn);
-  micBtn.textContent = turningOn ? '🎤' : '🔇';
-  document.getElementById('micStatus').textContent = turningOn ? 'Mic on' : 'Mic off';
+micBtn.onclick = () => {
+  if (!mesh.hasAudio) return;
+  micOn = !micOn;
+  mesh.setMicEnabled(micOn);
+  micBtn.classList.toggle('active', micOn);
+  micBtn.classList.toggle('muted', !micOn);
+  micBtn.textContent = micOn ? '🎤' : '🔇';
+  document.getElementById('micStatus').textContent = micOn ? 'Mic on' : 'Mic off';
 };
 
-// ---------- Manual mirror / rotate (your own camera only) ----------
-// Some devices deliver an already-mirrored camera feed at the hardware
-// level, which shows up as "my partner looks flipped" and can't be
-// reliably auto-detected from code. These give each person manual control
-// over their OWN camera's mirror/rotation, both for their live preview and
-// for what gets baked into their captured shots.
-let mirrorLocal = true;
-let localRotation = 0; // 0, 90, 180, 270
+// ---------- Mirror / rotate (synced per-person, not just local display) ----------
+// Mirroring used to be a local-only CSS trick, which meant it never
+// affected what your partner actually saw of you -- your setting couldn't
+// reach their screen. Now each person's mirror/rotation preference is
+// stored in Firestore and applied by EVERY viewer (including the person
+// themselves), so it's consistent everywhere that person's video appears.
+let myMirrored = true;
+let myRotation = 0;
+const participantTransforms = {}; // peerId -> { mirrored, rotation }
 
-function applyLocalVideoTransform() {
-  const el = document.getElementById('localVideo');
-  el.style.transform = `rotate(${localRotation}deg) scaleX(${mirrorLocal ? -1 : 1})`;
+function applyTransformToTile(targetPeerId, { mirrored, rotation }) {
+  const videoEl = targetPeerId === peerId
+    ? document.getElementById('localVideo')
+    : document.querySelector(`#tile-${targetPeerId} video`);
+  if (!videoEl) return;
+  videoEl.style.transform = `rotate(${rotation}deg) scaleX(${mirrored ? -1 : 1})`;
 }
-applyLocalVideoTransform();
 
 document.getElementById('mirrorBtn').onclick = () => {
-  mirrorLocal = !mirrorLocal;
-  applyLocalVideoTransform();
+  myMirrored = !myMirrored;
+  mesh.setMyTransform({ mirrored: myMirrored, rotation: myRotation });
 };
 document.getElementById('rotateBtn').onclick = () => {
-  localRotation = (localRotation + 90) % 360;
-  applyLocalVideoTransform();
+  myRotation = (myRotation + 90) % 360;
+  mesh.setMyTransform({ mirrored: myMirrored, rotation: myRotation });
 };
 
 // ---------- Mesh setup ----------
 const videoGrid = document.getElementById('videoGrid');
 const statusLine = document.getElementById('statusLine');
+document.getElementById('localVideo').closest('.video-tile').dataset.peerId = peerId;
 
 const mesh = new MeshRoom(roomCode, peerId, {
   onRemoteStream: (otherId, stream) => {
@@ -137,8 +126,11 @@ const mesh = new MeshRoom(roomCode, peerId, {
       tile = document.createElement('div');
       tile.className = 'video-tile';
       tile.id = 'tile-' + otherId;
+      tile.dataset.peerId = otherId;
       tile.innerHTML = `<video autoplay playsinline></video><span class="tag">Partner</span>`;
       videoGrid.appendChild(tile);
+      // Apply this peer's known transform (if we already have it) to the new tile
+      if (participantTransforms[otherId]) applyTransformToTile(otherId, participantTransforms[otherId]);
     }
     tile.querySelector('video').srcObject = stream;
     statusLine.textContent = 'Connected';
@@ -147,6 +139,14 @@ const mesh = new MeshRoom(roomCode, peerId, {
     const tile = document.getElementById('tile-' + otherId);
     if (tile) tile.remove();
     statusLine.textContent = 'Partner left the room';
+  },
+  onParticipantTransform: (otherId, transform) => {
+    participantTransforms[otherId] = transform;
+    applyTransformToTile(otherId, transform);
+    if (otherId === peerId) {
+      myMirrored = transform.mirrored;
+      myRotation = transform.rotation;
+    }
   }
 });
 
@@ -155,6 +155,7 @@ const mesh = new MeshRoom(roomCode, peerId, {
     const localStream = await mesh.init();
     document.getElementById('localVideo').srcObject = localStream;
     statusLine.textContent = 'Waiting for others to join…';
+    initMicUI();
   } catch (err) {
     console.error(err);
     statusLine.textContent = `Camera error: ${err.name || 'Unknown'} — ${err.message || err}`;
@@ -261,40 +262,47 @@ function loadImage(src) {
 // Captures each participant's tile as its OWN separate image (a "layer"),
 // instead of merging everyone into one flat picture. This is what lets
 // each person be cropped/repositioned independently afterward.
+//
+// The capture buffer's shape is matched to how the layer will actually be
+// displayed (a slot photoW/N wide by photoH tall, where N = number of
+// people in the shot) rather than always assuming 4:3 -- this means far
+// less gets cropped away by default, since the raw capture already roughly
+// matches its eventual slot instead of needing a tight re-crop afterward.
 function captureShotLayers() {
   const tiles = [...videoGrid.querySelectorAll('.video-tile')];
+  const layout = stripLayout(shotCount);
+  const slotAspect = (layout.photoW / Math.max(1, tiles.length)) / layout.photoH;
   const layers = [];
 
   tiles.forEach((tile) => {
     const video = tile.querySelector('video');
     if (!video || video.readyState < 2) return;
 
-    const isLocal = tile.classList.contains('local');
-    // Capture closer to the source's natural shape (portrait vs landscape)
-    // instead of always forcing 4:3 -- keeps more of the original frame
-    // instead of over-cropping right away.
-    const portrait = video.videoWidth < video.videoHeight;
-    const bufW = portrait ? 240 : 320;
-    const bufH = portrait ? 320 : 240;
+    const tilePeerId = tile.dataset.peerId;
+    const isMe = tilePeerId === peerId;
+    const transform = isMe
+      ? { mirrored: myMirrored, rotation: myRotation }
+      : (participantTransforms[tilePeerId] || { mirrored: true, rotation: 0 });
 
+    // Base buffer size targets the slot's aspect ratio directly, at a
+    // reasonable resolution.
+    const baseH = 360;
+    const baseW = Math.round(baseH * slotAspect);
+
+    const rotated90 = transform.rotation === 90 || transform.rotation === 270;
     const canvas = document.createElement('canvas');
-    const rotated90 = isLocal && (localRotation === 90 || localRotation === 270);
-    canvas.width = rotated90 ? bufH : bufW;
-    canvas.height = rotated90 ? bufW : bufH;
+    canvas.width = rotated90 ? baseH : baseW;
+    canvas.height = rotated90 ? baseW : baseH;
     const ctx = canvas.getContext('2d');
 
-    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, bufW, bufH);
+    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, baseW, baseH);
     if (!crop) return;
 
     ctx.save();
-    if (isLocal) {
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((localRotation * Math.PI) / 180);
-      if (mirrorLocal) ctx.scale(-1, 1);
-      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -bufW / 2, -bufH / 2, bufW, bufH);
-    } else {
-      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, bufW, bufH);
-    }
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((transform.rotation * Math.PI) / 180);
+    if (transform.mirrored) ctx.scale(-1, 1);
+    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -baseW / 2, -baseH / 2, baseW, baseH);
     ctx.restore();
 
     layers.push({ src: canvas.toDataURL('image/png') });

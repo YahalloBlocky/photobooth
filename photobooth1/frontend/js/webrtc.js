@@ -34,55 +34,75 @@ const RTC_SERVERS = {
 };
 
 class MeshRoom {
-  constructor(roomCode, myPeerId, { onRemoteStream, onRemoteLeave } = {}) {
+  constructor(roomCode, myPeerId, { onRemoteStream, onRemoteLeave, onParticipantTransform } = {}) {
     this.roomCode = roomCode;
     this.myPeerId = myPeerId;
     this.onRemoteStream = onRemoteStream || (() => {});
     this.onRemoteLeave = onRemoteLeave || (() => {});
+    this.onParticipantTransform = onParticipantTransform || (() => {});
     this.localStream = null;
     this.hasAudio = false;
     this.peerConnections = {}; // otherId -> RTCPeerConnection
     this.knownParticipants = new Set();
     this.roomRef = db.collection('rooms').doc(roomCode);
-    this._lastSeenRenegotiate = {};
+    this._lastSeenTransform = {};
   }
 
   async init() {
-    // Video only on join -- some people will only ever grant camera access,
-    // and requesting audio+video together means a mic denial blocks the
-    // whole join. Mic is requested separately later via enableMic().
-    this.localStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'user',
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        aspectRatio: { ideal: 4 / 3 }
-      }
-    });
+    const videoConstraints = {
+      facingMode: 'user',
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      aspectRatio: { ideal: 4 / 3 }
+    };
+
+    // Request camera + mic together so the connection carries audio from
+    // the very first handshake -- no fragile "add a track mid-call" step
+    // needed later. If that combined request fails (mic denied/blocked),
+    // fall back to camera-only so people can still join.
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
+        audio: true
+      });
+      this.hasAudio = true;
+    } catch (err) {
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints
+      });
+      this.hasAudio = false;
+    }
 
     await this.roomRef.collection('participants').doc(this.myPeerId).set({
-      joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+      joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      mirrored: true,
+      rotation: 0
     });
 
-    // Watch for other participants joining/leaving/renegotiating
+    // Watch for other participants joining/leaving, and for anyone's
+    // mirror/rotation preference changing (including our own -- Firestore
+    // fires this for local writes too, so one code path handles everyone).
     this.roomRef.collection('participants').onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const otherId = change.doc.id;
-        if (otherId === this.myPeerId) return;
+        const data = change.doc.data();
 
-        if (change.type === 'added' && !this.knownParticipants.has(otherId)) {
+        if (change.type === 'added' && otherId !== this.myPeerId && !this.knownParticipants.has(otherId)) {
           this.knownParticipants.add(otherId);
           this.connectTo(otherId);
         }
-        if (change.type === 'removed') {
+        if (change.type === 'removed' && otherId !== this.myPeerId) {
           this.knownParticipants.delete(otherId);
           this.disconnectFrom(otherId);
         }
-        if (change.type === 'modified' && this.knownParticipants.has(otherId)) {
-          const data = change.doc.data();
-          if (data.renegotiateRequest && data.renegotiateRequest !== this._lastSeenRenegotiate[otherId]) {
-            this._lastSeenRenegotiate[otherId] = data.renegotiateRequest;
-            this.rebuildConnection(otherId);
+        if (data) {
+          const key = `${data.mirrored}_${data.rotation}`;
+          if (this._lastSeenTransform[otherId] !== key) {
+            this._lastSeenTransform[otherId] = key;
+            this.onParticipantTransform(otherId, {
+              mirrored: data.mirrored !== false,
+              rotation: data.rotation || 0
+            });
           }
         }
       });
@@ -91,6 +111,13 @@ class MeshRoom {
     window.addEventListener('beforeunload', () => this.leave());
 
     return this.localStream;
+  }
+
+  async setMyTransform({ mirrored, rotation }) {
+    await this.roomRef.collection('participants').doc(this.myPeerId).set(
+      { mirrored, rotation },
+      { merge: true }
+    );
   }
 
   pairKey(otherId) {
@@ -181,56 +208,6 @@ class MeshRoom {
   setMicEnabled(enabled) {
     if (!this.localStream) return;
     this.localStream.getAudioTracks().forEach(t => { t.enabled = enabled; });
-  }
-
-  // Requests microphone access separately (called when the user taps the
-  // mic button). If granted, adds the track locally and tells every
-  // connected peer to rebuild the connection so it gets included.
-  async enableMic() {
-    if (this.hasAudio) {
-      this.setMicEnabled(true);
-      return true;
-    }
-
-    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const audioTrack = audioStream.getAudioTracks()[0];
-    this.localStream.addTrack(audioTrack);
-    this.hasAudio = true;
-
-    // Tell other peers (and ourselves, symmetrically) that this connection
-    // needs to be rebuilt to carry the new track.
-    await this.roomRef.collection('participants').doc(this.myPeerId).set({
-      renegotiateRequest: Date.now()
-    }, { merge: true });
-
-    const peers = Object.keys(this.peerConnections);
-    for (const otherId of peers) {
-      await this.rebuildConnection(otherId);
-    }
-    return true;
-  }
-
-  // Tears down and re-does the handshake for one connection. Used when a
-  // track gets added mid-call (e.g. mic enabled), since renegotiating an
-  // existing WebRTC connection reliably is complex -- redoing the whole
-  // handshake is simpler and good enough for a small group call.
-  async rebuildConnection(otherId) {
-    this.disconnectFrom(otherId);
-
-    const connRef = this.roomRef.collection('connections').doc(this.pairKey(otherId));
-    try {
-      const offerCandSnap = await connRef.collection('offerCandidates').get();
-      await Promise.all(offerCandSnap.docs.map(d => d.ref.delete()));
-      const answerCandSnap = await connRef.collection('answerCandidates').get();
-      await Promise.all(answerCandSnap.docs.map(d => d.ref.delete()));
-      await connRef.set({
-        offer: firebase.firestore.FieldValue.delete(),
-        answer: firebase.firestore.FieldValue.delete()
-      }, { merge: true });
-    } catch (e) { /* best effort */ }
-
-    this.knownParticipants.add(otherId);
-    await this.connectTo(otherId);
   }
 
   async leave() {

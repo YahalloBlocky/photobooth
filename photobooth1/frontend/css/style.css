@@ -385,7 +385,8 @@ input[type="text"]:focus, input[type="password"]:focus {
   background: #000;
 }
 
-.video-tile.local video { transform: scaleX(-1); }
+/* Note: mirroring is applied per-tile via inline JS transforms (synced
+   through Firestore per-person), not a static CSS rule -- see room.js */
 
 .video-tile .tag {
   position: absolute;
