@@ -24,7 +24,8 @@ const PhotoEditor = (() => {
 
   // 'strip' mode
   let shots = [];              // [{ layers: [{ img }, ...] }]
-  let shotSize = { w: 0, h: 0 };
+  let defaultShotSize = { w: 0, h: 0 };
+  let shotSizes = [];          // [{w,h}] -- mutable, one per shot (Resize tool)
   let shotPositions = [];      // [{x,y}] -- mutable, one per shot
   let layerCrops = [];         // [[{x,y,w,h,rotation,flipX}]] -- [shotIdx][layerIdx]
   let frameRenderer = null;
@@ -44,10 +45,11 @@ const PhotoEditor = (() => {
   let undoStack = [];
   let redoStack = [];
 
-  let dragMode = null; // 'shot' | 'layer-crop' | 'flat-crop' | 'object-move' | 'object-resize' | 'stroke'
+  let dragMode = null; // 'shot' | 'shot-resize' | 'layer-crop' | 'flat-crop' | 'object-move' | 'object-resize' | 'stroke'
   let dragTarget = null;
   let dragStart = null;
   let dragStartVal = null;
+  let resizingShotIdx = null;
 
   let onSaveCb = null;
   let textEditEl = null;
@@ -65,6 +67,7 @@ const PhotoEditor = (() => {
   function snapshot() {
     return JSON.stringify({
       shotPositions,
+      shotSizes,
       layerCrops,
       actions,
       objects: objects.map(o => ({ ...o, img: undefined, imgSrc: o.img ? o.img.src : undefined })),
@@ -82,6 +85,7 @@ const PhotoEditor = (() => {
   function restore(snapStr) {
     const s = JSON.parse(snapStr);
     shotPositions = s.shotPositions || shotPositions;
+    shotSizes = s.shotSizes || shotSizes;
     layerCrops = s.layerCrops || layerCrops;
     actions = s.actions || [];
     flatCrop = s.flatCrop || flatCrop;
@@ -152,16 +156,17 @@ const PhotoEditor = (() => {
     crop.y = Math.max(0, Math.min(img.naturalHeight - crop.h, crop.y));
   }
 
-  function layerRectsForShot(shotX, shotY, layerCount) {
+  function layerRectsForShot(shotX, shotY, sizeW, sizeH, layerCount) {
     const rects = [];
-    const w = shotSize.w / Math.max(1, layerCount);
-    for (let j = 0; j < layerCount; j++) rects.push({ x: shotX + w * j, y: shotY, w, h: shotSize.h });
+    const w = sizeW / Math.max(1, layerCount);
+    for (let j = 0; j < layerCount; j++) rects.push({ x: shotX + w * j, y: shotY, w, h: sizeH });
     return rects;
   }
 
   function shotBounds(shotIdx) {
     const pos = shotPositions[shotIdx];
-    return { x: pos.x, y: pos.y, w: shotSize.w, h: shotSize.h };
+    const size = shotSizes[shotIdx];
+    return { x: pos.x, y: pos.y, w: size.w, h: size.h };
   }
 
   // ---------- Rendering ----------
@@ -222,7 +227,8 @@ const PhotoEditor = (() => {
 
       shots.forEach((shot, i) => {
         const pos = shotPositions[i];
-        const rects = layerRectsForShot(pos.x, pos.y, shot.layers.length);
+        const size = shotSizes[i];
+        const rects = layerRectsForShot(pos.x, pos.y, size.w, size.h, shot.layers.length);
         shot.layers.forEach((layer, j) => {
           if (!layer.img) return;
           drawTransformed(layer.img, layerCrops[i][j], rects[j]);
@@ -236,6 +242,24 @@ const PhotoEditor = (() => {
           ctx.setLineDash([6, 4]);
           ctx.strokeRect(b.x, b.y, b.w, b.h);
           ctx.setLineDash([]);
+          ctx.restore();
+        }
+        if (currentTool === 'resize') {
+          const b = shotBounds(i);
+          ctx.save();
+          ctx.strokeStyle = '#A5502E';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.strokeRect(b.x, b.y, b.w, b.h);
+          ctx.setLineDash([]);
+          const hs = handleSize();
+          ctx.fillStyle = '#A5502E';
+          ctx.beginPath();
+          ctx.arc(b.x + b.w, b.y + b.h, hs / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
           ctx.restore();
         }
         if (currentTool === 'crop' && activeLayerRef && activeLayerRef.shotIdx === i) {
@@ -322,10 +346,20 @@ const PhotoEditor = (() => {
     return -1;
   }
 
+  function hitTestShotHandle(pos) {
+    const hs = handleSize();
+    for (let i = 0; i < shotPositions.length; i++) {
+      const b = shotBounds(i);
+      if (Math.hypot(pos.x - (b.x + b.w), pos.y - (b.y + b.h)) <= hs) return i;
+    }
+    return -1;
+  }
+
   function hitTestLayer(pos) {
     for (let i = 0; i < shots.length; i++) {
       const pos_i = shotPositions[i];
-      const rects = layerRectsForShot(pos_i.x, pos_i.y, shots[i].layers.length);
+      const size_i = shotSizes[i];
+      const rects = layerRectsForShot(pos_i.x, pos_i.y, size_i.w, size_i.h, shots[i].layers.length);
       for (let j = 0; j < rects.length; j++) {
         const r = rects[j];
         if (pos.x >= r.x && pos.x <= r.x + r.w && pos.y >= r.y && pos.y <= r.y + r.h) {
@@ -383,6 +417,27 @@ const PhotoEditor = (() => {
         dragTarget = shotPositions[shotIdx];
         dragStart = pos;
         dragStartVal = { x: shotPositions[shotIdx].x, y: shotPositions[shotIdx].y };
+      }
+      return;
+    }
+
+    if (mode === 'strip' && currentTool === 'resize') {
+      const handleIdx = hitTestShotHandle(pos);
+      if (handleIdx >= 0) {
+        pushHistory();
+        dragMode = 'shot-resize';
+        dragTarget = shotSizes[handleIdx];
+        resizingShotIdx = handleIdx;
+        dragStart = pos;
+        return;
+      }
+      const shotIdx = hitTestShot(pos);
+      if (shotIdx >= 0) {
+        pushHistory();
+        dragMode = 'shot-resize';
+        dragTarget = shotSizes[shotIdx];
+        resizingShotIdx = shotIdx;
+        dragStart = pos;
       }
       return;
     }
@@ -445,11 +500,19 @@ const PhotoEditor = (() => {
       dragTarget.x = dragStartVal.x + (pos.x - dragStart.x);
       dragTarget.y = dragStartVal.y + (pos.y - dragStart.y);
       render();
+      return
+    }
+    if (dragMode === 'shot-resize') {
+      const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
+      dragTarget.w = Math.max(60, dragTarget.w + dx);
+      dragTarget.h = Math.max(60, dragTarget.h + dy);
+      dragStart = pos;
+      render();
       return;
     }
     if (dragMode === 'flat-crop' || dragMode === 'layer-crop') {
       const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
-      const destW = dragMode === 'flat-crop' ? width : shotSize.w / shots[dragTarget._shotIdx].layers.length;
+      const destW = dragMode === 'flat-crop' ? width : shotSizes[dragTarget._shotIdx].w / shots[dragTarget._shotIdx].layers.length;
       const scale = dragTarget.w / destW;
       dragTarget.x = dragStartVal.x - dx * scale;
       dragTarget.y = dragStartVal.y - dy * scale;
@@ -460,6 +523,18 @@ const PhotoEditor = (() => {
   }
 
   function onPointerUp() {
+    if (dragMode === 'shot-resize' && resizingShotIdx !== null) {
+      const shot = shots[resizingShotIdx];
+      const size = shotSizes[resizingShotIdx];
+      const pos = shotPositions[resizingShotIdx];
+      const rects = layerRectsForShot(pos.x, pos.y, size.w, size.h, shot.layers.length);
+      shot.layers.forEach((layer, j) => {
+        if (!layer.img) return;
+        layerCrops[resizingShotIdx][j] = computeCoverCrop(layer.img.naturalWidth, layer.img.naturalHeight, rects[j].w, rects[j].h);
+      });
+      resizingShotIdx = null;
+      render();
+    }
     dragMode = null;
     dragTarget = null;
     dragStart = null;
@@ -689,6 +764,7 @@ const PhotoEditor = (() => {
           dataUrl,
           state: mode === 'strip' ? {
             shotPositions: JSON.parse(JSON.stringify(shotPositions)),
+            shotSizes: JSON.parse(JSON.stringify(shotSizes)),
             shotCrops: JSON.parse(JSON.stringify(layerCrops)),
             actions: JSON.parse(JSON.stringify(actions)),
             objects: objects.map(o => o.type === 'image' ? { ...o, img: undefined, imgSrc: o.img.src } : { ...o }),
@@ -714,8 +790,9 @@ const PhotoEditor = (() => {
   function resetAll() {
     if (mode === 'strip') {
       shotPositions = shots.map((_, i) => ({ ...defaultPositionsRef[i] }));
+      shotSizes = shots.map(() => ({ ...defaultSizeRef }));
       layerCrops = shots.map((shot, i) => shot.layers.map((layer, j) => {
-        const rects = layerRectsForShot(defaultPositionsRef[i].x, defaultPositionsRef[i].y, shot.layers.length);
+        const rects = layerRectsForShot(defaultPositionsRef[i].x, defaultPositionsRef[i].y, defaultSizeRef.w, defaultSizeRef.h, shot.layers.length);
         return computeCoverCrop(layer.img.naturalWidth, layer.img.naturalHeight, rects[j].w, rects[j].h);
       }));
       customFrameImg = null;
@@ -734,6 +811,7 @@ const PhotoEditor = (() => {
   }
 
   let defaultPositionsRef = [];
+  let defaultSizeRef = { w: 0, h: 0 };
 
   // ---------- Public API ----------
   function openFlat({ imageSrc, width: w, height: h, onSave }) {
@@ -766,13 +844,13 @@ const PhotoEditor = (() => {
     overlay.classList.add('open'); document.body.classList.add('scroll-locked');
   }
 
-  function openStrip({ shots: shotSrcs, defaultShotPositions, shotSize: sSize, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
+  function openStrip({ shots: shotSrcs, defaultShotPositions, defaultShotSize: sSize, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
     ensureDom();
     wireOnce();
     mode = 'strip';
     width = w; height = h;
     canvas.width = w; canvas.height = h;
-    shotSize = sSize;
+    defaultSizeRef = sSize;
     defaultPositionsRef = defaultShotPositions;
     frameRenderer = fr;
     onSaveCb = onSave;
@@ -792,6 +870,7 @@ const PhotoEditor = (() => {
     currentSize = Number(document.getElementById('editorSize').value);
 
     shotPositions = shotSrcs.map((_, i) => (initialState && initialState.shotPositions && initialState.shotPositions[i]) || { ...defaultShotPositions[i] });
+    shotSizes = shotSrcs.map((_, i) => (initialState && initialState.shotSizes && initialState.shotSizes[i]) || { ...sSize });
 
     shots = shotSrcs.map(s => ({ layers: s.layers.map(() => ({ img: null })) }));
     layerCrops = shotSrcs.map(() => []);
@@ -810,7 +889,7 @@ const PhotoEditor = (() => {
         const img = new Image();
         img.onload = () => {
           shots[i].layers[j].img = img;
-          const rects = layerRectsForShot(shotPositions[i].x, shotPositions[i].y, shot.layers.length);
+          const rects = layerRectsForShot(shotPositions[i].x, shotPositions[i].y, shotSizes[i].w, shotSizes[i].h, shot.layers.length);
           const restoredCrop = initialState && initialState.shotCrops && initialState.shotCrops[i] && initialState.shotCrops[i][j];
           layerCrops[i][j] = restoredCrop || computeCoverCrop(img.naturalWidth, img.naturalHeight, rects[j].w, rects[j].h);
           loaded++;

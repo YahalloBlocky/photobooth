@@ -47,6 +47,11 @@ class MeshRoom {
     this.knownParticipants = new Set();
     this.roomRef = db.collection('rooms').doc(roomCode);
     this._lastSeenTransform = {};
+    this._lastSeenSession = {};
+    // Unique per page-load, not per person -- lets other peers tell "this
+    // person reloaded/reconnected" apart from "their mirror setting changed",
+    // so a refresh can trigger a clean reconnect instead of a stuck black tile.
+    this.sessionId = crypto.randomUUID();
   }
 
   async init() {
@@ -77,24 +82,35 @@ class MeshRoom {
     await this.roomRef.collection('participants').doc(this.myPeerId).set({
       joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
       mirrored: true,
-      rotation: 0
+      rotation: 0,
+      sessionId: this.sessionId
     });
 
-    // Watch for other participants joining/leaving, and for anyone's
-    // mirror/rotation preference changing (including our own -- Firestore
-    // fires this for local writes too, so one code path handles everyone).
+    // Watch for other participants joining/leaving, mirror/rotation changes,
+    // and reconnects (a known participant's sessionId changing means their
+    // page reloaded -- rebuild the connection instead of leaving it stale).
     this.roomRef.collection('participants').onSnapshot((snapshot) => {
       snapshot.docChanges().forEach((change) => {
         const otherId = change.doc.id;
         const data = change.doc.data();
 
-        if (change.type === 'added' && otherId !== this.myPeerId && !this.knownParticipants.has(otherId)) {
-          this.knownParticipants.add(otherId);
-          this.connectTo(otherId);
+        if (change.type === 'added' && otherId !== this.myPeerId) {
+          this._lastSeenSession[otherId] = data.sessionId;
+          if (!this.knownParticipants.has(otherId)) {
+            this.knownParticipants.add(otherId);
+            this.connectTo(otherId);
+          }
         }
         if (change.type === 'removed' && otherId !== this.myPeerId) {
           this.knownParticipants.delete(otherId);
+          delete this._lastSeenSession[otherId];
           this.disconnectFrom(otherId);
+        }
+        if (change.type === 'modified' && otherId !== this.myPeerId && this.knownParticipants.has(otherId)) {
+          if (data.sessionId && data.sessionId !== this._lastSeenSession[otherId]) {
+            this._lastSeenSession[otherId] = data.sessionId;
+            this.reconnectTo(otherId);
+          }
         }
         if (data) {
           const key = `${data.mirrored}_${data.rotation}`;
@@ -108,8 +124,6 @@ class MeshRoom {
         }
       });
     });
-
-    window.addEventListener('beforeunload', () => this.leave());
 
     return this.localStream;
   }
@@ -127,7 +141,32 @@ class MeshRoom {
       : `${otherId}_${this.myPeerId}`;
   }
 
+  // Clears any leftover offer/answer/candidates from a previous session
+  // before starting a fresh handshake -- without this, a reload could leave
+  // stale SDP/candidates in Firestore that poison the next connection
+  // attempt (this was the actual cause of "reload breaks the call").
+  async clearConnectionDoc(otherId) {
+    const connRef = this.roomRef.collection('connections').doc(this.pairKey(otherId));
+    try {
+      const offerCandSnap = await connRef.collection('offerCandidates').get();
+      await Promise.all(offerCandSnap.docs.map(d => d.ref.delete()));
+      const answerCandSnap = await connRef.collection('answerCandidates').get();
+      await Promise.all(answerCandSnap.docs.map(d => d.ref.delete()));
+      await connRef.set({
+        offer: firebase.firestore.FieldValue.delete(),
+        answer: firebase.firestore.FieldValue.delete()
+      }, { merge: true });
+    } catch (e) { /* best effort */ }
+  }
+
+  async reconnectTo(otherId) {
+    this.disconnectFrom(otherId, { silent: true });
+    await this.connectTo(otherId);
+  }
+
   async connectTo(otherId) {
+    await this.clearConnectionDoc(otherId);
+
     const iAmInitiator = this.myPeerId < otherId;
     const pc = new RTCPeerConnection(RTC_SERVERS);
     this.peerConnections[otherId] = pc;
@@ -197,13 +236,13 @@ class MeshRoom {
     }
   }
 
-  disconnectFrom(otherId) {
+  disconnectFrom(otherId, { silent } = {}) {
     const pc = this.peerConnections[otherId];
     if (pc) {
       pc.close();
       delete this.peerConnections[otherId];
     }
-    this.onRemoteLeave(otherId);
+    if (!silent) this.onRemoteLeave(otherId);
   }
 
   setMicEnabled(enabled) {

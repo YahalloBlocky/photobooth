@@ -23,14 +23,47 @@ let shotCount = 4;
 let capturedShots = [];
 let lastHandledShotIndex = -1;
 let selectedBorder = { type: 'builtin', id: 'flower' };
+let caption = '';
+let includeDate = false;
 
 // Persists across preview re-renders and editor sessions. Purely local to
 // this browser -- host and guest each edit their own independent copy.
-let editState = { shotPositions: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+let editState = { shotPositions: null, shotSizes: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
 
 function resetEditState() {
-  editState = { shotPositions: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
+  editState = { shotPositions: null, shotSizes: null, shotCrops: null, actions: [], objects: [], customFrameSrc: null };
 }
+
+// ---------- Reload resilience ----------
+// A reload used to wipe capturedShots entirely and leave the connection
+// stale. This persists progress to sessionStorage so a refresh doesn't
+// lose the shots you already took (the connection side is fixed separately
+// in webrtc.js).
+const SESSION_KEY = `photogether_shots_${roomCode}`;
+
+function persistShotsState() {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ capturedShots, editState, caption, includeDate }));
+  } catch (e) { /* storage full or unavailable -- not worth failing over */ }
+}
+
+function restoreShotsState() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed.capturedShots) capturedShots = parsed.capturedShots;
+    if (parsed.editState) editState = parsed.editState;
+    if (parsed.caption) caption = parsed.caption;
+    if (parsed.includeDate) includeDate = parsed.includeDate;
+  } catch (e) { /* corrupt/missing data, just start fresh */ }
+}
+
+function clearShotsState() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+}
+
+restoreShotsState();
 
 // ---------- Shot selector ----------
 const shotSelector = document.getElementById('shotSelector');
@@ -119,6 +152,32 @@ const videoGrid = document.getElementById('videoGrid');
 const statusLine = document.getElementById('statusLine');
 document.getElementById('localVideo').closest('.video-tile').dataset.peerId = peerId;
 
+// Both people need to see the SAME left-to-right arrangement, or their
+// poses won't line up in the final shot. Sorting every tile by peerId
+// (identical data on both screens) instead of "local tile always first"
+// guarantees that -- and the same sorted order is used when capturing,
+// not just for the visual layout.
+function reorderTiles() {
+  const tiles = [...videoGrid.querySelectorAll('.video-tile')]
+    .sort((a, b) => a.dataset.peerId.localeCompare(b.dataset.peerId));
+  tiles.forEach((tile, i) => { tile.style.order = i; });
+  updateVideoGridLayout(tiles.length);
+}
+
+// Tile shape matches the eventual strip slot shape for the CURRENT
+// participant count (480 / N wide, 360 tall) -- so what's visible live is
+// what ends up in the strip, not cropped differently after the fact. Also
+// caps a solo tile's width and forces exactly-2 tiles side by side even on
+// narrow mobile screens.
+function updateVideoGridLayout(tileCount) {
+  const aspect = (480 / Math.max(1, tileCount)) / 360;
+  videoGrid.style.setProperty('--tile-aspect', aspect);
+  videoGrid.classList.toggle('tiles-1', tileCount === 1);
+  videoGrid.classList.toggle('tiles-2', tileCount === 2);
+}
+
+updateVideoGridLayout(1);
+
 const mesh = new MeshRoom(roomCode, peerId, {
   onRemoteStream: (otherId, stream) => {
     let tile = document.getElementById('tile-' + otherId);
@@ -129,6 +188,7 @@ const mesh = new MeshRoom(roomCode, peerId, {
       tile.dataset.peerId = otherId;
       tile.innerHTML = `<div class="video-transform-wrap"><video autoplay playsinline></video></div><span class="tag">Partner</span>`;
       videoGrid.appendChild(tile);
+      reorderTiles();
       // Apply this peer's known transform (if we already have it) to the new tile
       if (participantTransforms[otherId]) applyTransformToTile(otherId, participantTransforms[otherId]);
     }
@@ -138,6 +198,7 @@ const mesh = new MeshRoom(roomCode, peerId, {
   onRemoteLeave: (otherId) => {
     const tile = document.getElementById('tile-' + otherId);
     if (tile) tile.remove();
+    reorderTiles();
     statusLine.textContent = 'Partner left the room';
   },
   onParticipantTransform: (otherId, transform) => {
@@ -183,6 +244,7 @@ roomRef.onSnapshot((snap) => {
     lastHandledShotIndex = -1;
     capturedShots = [];
     resetEditState();
+    clearShotsState();
     document.getElementById('roomView').style.display = 'block';
     document.getElementById('resultsView').style.display = 'none';
   }
@@ -259,18 +321,23 @@ function loadImage(src) {
   });
 }
 
-// Fixed capture shape, the same on every device and regardless of how
-// many people are in the shot. A portrait-leaning ratio since a shot
-// often ends up split into narrow per-person columns anyway -- cover-crop
-// at render time fits this into whatever slot shape it actually needs,
-// so a single consistent source shape is simpler and more predictable
-// than trying to guess the ideal shape per participant count.
-const CAPTURE_W = 360;
-const CAPTURE_H = 480;
-
+// Captures each participant's tile as its OWN separate image (a "layer"),
+// instead of merging everyone into one flat picture. This is what lets
+// each person be cropped/repositioned independently afterward.
+//
+// The buffer shape exactly matches the strip slot shape for the CURRENT
+// participant count (480/N wide, 360 tall) -- the same shape the live tile
+// preview is already showing (see updateVideoGridLayout). That means what
+// you see live is what ends up in the strip: no surprise re-crop later.
 function captureShotLayers() {
-  const tiles = [...videoGrid.querySelectorAll('.video-tile')];
+  const tiles = [...videoGrid.querySelectorAll('.video-tile')]
+    .sort((a, b) => a.dataset.peerId.localeCompare(b.dataset.peerId));
   const layers = [];
+
+  const slotAspect = (480 / Math.max(1, tiles.length)) / 360;
+  let baseW, baseH;
+  if (slotAspect >= 1) { baseH = 480; baseW = Math.round(480 * slotAspect); }
+  else { baseW = 360; baseH = Math.round(360 / slotAspect); }
 
   tiles.forEach((tile) => {
     const video = tile.querySelector('video');
@@ -284,18 +351,18 @@ function captureShotLayers() {
 
     const rotated90 = transform.rotation === 90 || transform.rotation === 270;
     const canvas = document.createElement('canvas');
-    canvas.width = rotated90 ? CAPTURE_H : CAPTURE_W;
-    canvas.height = rotated90 ? CAPTURE_W : CAPTURE_H;
+    canvas.width = rotated90 ? baseH : baseW;
+    canvas.height = rotated90 ? baseW : baseH;
     const ctx = canvas.getContext('2d');
 
-    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, CAPTURE_W, CAPTURE_H);
+    const crop = getCoverCropDims(video.videoWidth, video.videoHeight, baseW, baseH);
     if (!crop) return;
 
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((transform.rotation * Math.PI) / 180);
     if (transform.mirrored) ctx.scale(-1, 1);
-    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -CAPTURE_W / 2, -CAPTURE_H / 2, CAPTURE_W, CAPTURE_H);
+    ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, -baseW / 2, -baseH / 2, baseW, baseH);
     ctx.restore();
 
     layers.push({ src: canvas.toDataURL('image/png') });
@@ -306,6 +373,7 @@ function captureShotLayers() {
 
 function captureFrame() {
   capturedShots.push(captureShotLayers());
+  persistShotsState();
 }
 
 // ---------- Frames (default themed + admin-uploaded) ----------
@@ -378,9 +446,32 @@ async function showResults() {
   document.getElementById('roomView').style.display = 'none';
   document.getElementById('resultsView').style.display = 'block';
 
+  const captionInput = document.getElementById('captionInput');
+  const dateToggle = document.getElementById('dateToggle');
+  captionInput.value = caption;
+  dateToggle.checked = includeDate;
+
   await loadBorderOptions();
   await updatePreview();
 }
+
+let captionDebounceTimer = null;
+function debouncedUpdatePreview() {
+  clearTimeout(captionDebounceTimer);
+  captionDebounceTimer = setTimeout(updatePreview, 150);
+}
+
+document.getElementById('captionInput').addEventListener('input', (e) => {
+  caption = e.target.value;
+  persistShotsState();
+  debouncedUpdatePreview();
+});
+
+document.getElementById('dateToggle').addEventListener('change', (e) => {
+  includeDate = e.target.checked;
+  persistShotsState();
+  updatePreview();
+});
 
 async function loadBorderOptions() {
   const container = document.getElementById('borderOptions');
@@ -463,9 +554,16 @@ async function renderFinalStrip() {
   await document.fonts.ready;
 
   const layout = stripLayout(capturedShots.length);
+  const hasCaption = caption.trim().length > 0;
+  const dateStr = includeDate ? new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+
+  // Caption/date live in their own strip below the frame -- a separate
+  // section, not part of the editor, so it never interferes with edits.
+  const captionAreaHeight = (hasCaption || dateStr) ? (hasCaption ? 70 : 0) + (dateStr ? 34 : 0) + 24 : 0;
+
   const canvas = document.getElementById('stripCanvas');
   canvas.width = layout.width;
-  canvas.height = layout.height;
+  canvas.height = layout.height + captionAreaHeight;
   const ctx = canvas.getContext('2d');
 
   if (editState.customFrameSrc) {
@@ -479,7 +577,8 @@ async function renderFinalStrip() {
   for (let i = 0; i < capturedShots.length; i++) {
     const shot = capturedShots[i];
     const pos = (editState.shotPositions && editState.shotPositions[i]) || { x: layout.shotRects[i].x, y: layout.shotRects[i].y };
-    const layerRects = layerRectsForShot(pos.x, pos.y, layout.photoW, layout.photoH, shot.layers.length);
+    const size = (editState.shotSizes && editState.shotSizes[i]) || { w: layout.photoW, h: layout.photoH };
+    const layerRects = layerRectsForShot(pos.x, pos.y, size.w, size.h, shot.layers.length);
 
     for (let j = 0; j < shot.layers.length; j++) {
       const img = await loadImage(shot.layers[j].src);
@@ -527,6 +626,27 @@ async function renderFinalStrip() {
     }
   }
 
+  if (captionAreaHeight > 0) {
+    ctx.fillStyle = '#FBF7EE';
+    ctx.fillRect(0, layout.height, layout.width, captionAreaHeight);
+    ctx.textAlign = 'center';
+
+    let y = layout.height + 14;
+    if (hasCaption) {
+      ctx.fillStyle = '#2B2319';
+      ctx.font = "600 34px 'Caveat', cursive";
+      ctx.textBaseline = 'top';
+      ctx.fillText(caption.trim(), layout.width / 2, y);
+      y += 48;
+    }
+    if (dateStr) {
+      ctx.fillStyle = '#8A7A5C';
+      ctx.font = "500 16px 'IBM Plex Mono', monospace";
+      ctx.textBaseline = 'top';
+      ctx.fillText(dateStr, layout.width / 2, y);
+    }
+  }
+
   return canvas;
 }
 
@@ -538,7 +658,7 @@ document.getElementById('openEditorBtn').onclick = async () => {
   PhotoEditor.openStrip({
     shots: capturedShots,
     defaultShotPositions: layout.shotRects.map(r => ({ x: r.x, y: r.y })),
-    shotSize: { w: layout.photoW, h: layout.photoH },
+    defaultShotSize: { w: layout.photoW, h: layout.photoH },
     width: layout.width,
     height: layout.height,
     frameRenderer,
@@ -546,6 +666,7 @@ document.getElementById('openEditorBtn').onclick = async () => {
     onSave: (result) => {
       editState = result.state;
       document.getElementById('previewImg').src = result.dataUrl;
+      persistShotsState();
     }
   });
 };
@@ -590,6 +711,7 @@ document.getElementById('retakeBtn').onclick = async () => {
   if (!isHost) return;
   capturedShots = [];
   resetEditState();
+  clearShotsState();
   await roomRef.set({ status: 'lobby', currentShot: 0 }, { merge: true });
 };
 
@@ -601,6 +723,7 @@ document.getElementById('leaveBtn').onclick = async () => {
 
   try {
     await mesh.leave();
+    clearShotsState();
 
     const remaining = await roomRef.collection('participants').get();
     if (remaining.empty) {
