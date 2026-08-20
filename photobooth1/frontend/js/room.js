@@ -170,8 +170,12 @@ function reorderTiles() {
 // caps a solo tile's width and forces exactly-2 tiles side by side even on
 // narrow mobile screens.
 function updateVideoGridLayout(tileCount) {
-  const aspect = (480 / Math.max(1, tileCount)) / 360;
-  videoGrid.style.setProperty('--tile-aspect', aspect);
+  const n = Math.max(1, tileCount);
+  // width:height as clean integers (480 : 360*n) rather than a single
+  // decimal ratio -- some mobile browsers don't reliably parse
+  // `aspect-ratio: 0.667` but all of them handle `480 / 720` correctly.
+  videoGrid.style.setProperty('--tile-w', 480);
+  videoGrid.style.setProperty('--tile-h', 360 * n);
   videoGrid.classList.toggle('tiles-1', tileCount === 1);
   videoGrid.classList.toggle('tiles-2', tileCount === 2);
 }
@@ -383,15 +387,21 @@ const THEMED_BORDERS = [
   { id: 'space', label: 'Space', bg: '#20203A', frame: '#8C8CC4', caption: '#F2EADC', emojis: ['✨', '🌙', '⭐'] }
 ];
 
-function drawThemedBorder(theme, ctx, width, height) {
+function drawThemedBorder(theme, ctx, width, height, photoAreaHeight) {
+  const contentHeight = photoAreaHeight || height;
+  const hasExtraArea = contentHeight !== height;
+
+  // Background/border cover the FULL canvas (including any caption area
+  // below) so the frame reads as one continuous card, not a frame with a
+  // mismatched box tacked on underneath it.
   ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = theme.frame;
   ctx.lineWidth = 3;
   ctx.strokeRect(9, 9, width - 18, height - 18);
 
-  const topMargin = 34, bottomMargin = 54;
-  const usableHeight = height - topMargin - bottomMargin;
+  const topMargin = 34, bottomMargin = hasExtraArea ? 20 : 54;
+  const usableHeight = contentHeight - topMargin - bottomMargin;
   const spacing = 64;
   const count = Math.max(2, Math.floor(usableHeight / spacing));
   ctx.font = '22px sans-serif';
@@ -404,15 +414,19 @@ function drawThemedBorder(theme, ctx, width, height) {
     ctx.fillText(emoji, width - 20, y);
   }
 
-  ctx.fillStyle = theme.caption;
-  ctx.font = '600 20px "IBM Plex Mono", monospace';
-  ctx.fillText('PHOTOGETHER', width / 2, height - 24);
+  // Skip the built-in branding caption when the user has their own caption
+  // -- avoids two captions competing for the same space.
+  if (!hasExtraArea) {
+    ctx.fillStyle = theme.caption;
+    ctx.font = '600 20px "IBM Plex Mono", monospace';
+    ctx.fillText('PHOTOGETHER', width / 2, height - 24);
+  }
 }
 
-async function getFrameRenderer() {
+async function getFrameRenderer(photoAreaHeight) {
   if (selectedBorder.type === 'builtin') {
     const theme = THEMED_BORDERS.find(x => x.id === selectedBorder.id);
-    return (ctx, w, h) => drawThemedBorder(theme, ctx, w, h);
+    return (ctx, w, h) => drawThemedBorder(theme, ctx, w, h, photoAreaHeight);
   }
   if (selectedBorder.type === 'image') {
     const img = await loadImage(selectedBorder.dataUrl);
@@ -562,16 +576,27 @@ async function renderFinalStrip() {
   const captionAreaHeight = (hasCaption || dateStr) ? (hasCaption ? 70 : 0) + (dateStr ? 34 : 0) + 24 : 0;
 
   const canvas = document.getElementById('stripCanvas');
+  const totalHeight = layout.height + captionAreaHeight;
   canvas.width = layout.width;
-  canvas.height = layout.height + captionAreaHeight;
+  canvas.height = totalHeight;
   const ctx = canvas.getContext('2d');
 
+  // The frame now extends across the FULL canvas (photos + caption area)
+  // instead of stopping short and leaving a mismatched plain box below it.
+  let themeCaptionColor = null;
   if (editState.customFrameSrc) {
     const cf = await loadImage(editState.customFrameSrc);
-    ctx.drawImage(cf, 0, 0, layout.width, layout.height);
+    ctx.drawImage(cf, 0, 0, layout.width, totalHeight);
+  } else if (selectedBorder.type === 'builtin') {
+    const theme = THEMED_BORDERS.find(x => x.id === selectedBorder.id);
+    themeCaptionColor = theme.caption;
+    drawThemedBorder(theme, ctx, layout.width, totalHeight, layout.height);
+  } else if (selectedBorder.type === 'image') {
+    const img = await loadImage(selectedBorder.dataUrl);
+    ctx.drawImage(img, 0, 0, layout.width, totalHeight);
   } else {
-    const renderer = await getFrameRenderer();
-    renderer(ctx, layout.width, layout.height);
+    ctx.fillStyle = '#FBF7EE';
+    ctx.fillRect(0, 0, layout.width, totalHeight);
   }
 
   for (let i = 0; i < capturedShots.length; i++) {
@@ -627,20 +652,40 @@ async function renderFinalStrip() {
   }
 
   if (captionAreaHeight > 0) {
-    ctx.fillStyle = '#FBF7EE';
-    ctx.fillRect(0, layout.height, layout.width, captionAreaHeight);
     ctx.textAlign = 'center';
+    const usingThemeColor = !!themeCaptionColor;
+    const textColor = themeCaptionColor || '#2B2319';
+    const dateColor = themeCaptionColor || '#8A7A5C';
+
+    // For custom/uploaded frames we don't know the underlying color, so add
+    // a soft translucent backing behind the text to guarantee it's readable
+    // regardless of what's under it. Themed frames already have tuned
+    // contrast, so skip the backing there.
+    if (!usingThemeColor) {
+      ctx.fillStyle = 'rgba(251, 247, 238, 0.82)';
+      const pad = 10;
+      const bx = pad, by = layout.height + pad, bw = layout.width - pad * 2, bh = captionAreaHeight - pad * 2;
+      const r = 10;
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
+      ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
+      ctx.arcTo(bx, by + bh, bx, by, r);
+      ctx.arcTo(bx, by, bx + bw, by, r);
+      ctx.closePath();
+      ctx.fill();
+    }
 
     let y = layout.height + 14;
     if (hasCaption) {
-      ctx.fillStyle = '#2B2319';
+      ctx.fillStyle = textColor;
       ctx.font = "600 34px 'Caveat', cursive";
       ctx.textBaseline = 'top';
       ctx.fillText(caption.trim(), layout.width / 2, y);
       y += 48;
     }
     if (dateStr) {
-      ctx.fillStyle = '#8A7A5C';
+      ctx.fillStyle = dateColor;
       ctx.font = "500 16px 'IBM Plex Mono', monospace";
       ctx.textBaseline = 'top';
       ctx.fillText(dateStr, layout.width / 2, y);

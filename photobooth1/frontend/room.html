@@ -127,29 +127,20 @@
   <div class="editor-overlay" id="editorOverlay">
     <div class="editor-modal">
       <p style="font-size:0.8rem; color:var(--ink-soft); margin:0; flex-shrink:0;">
-        <strong>Edit your picture</strong>
+        <strong>Move</strong> drags a photo around the strip. <strong>Resize</strong> changes how big a shot is.
+        <strong>Crop</strong> lets you drag inside one person's photo to adjust what's shown, plus rotate/flip/zoom it.
       </p>
       <div class="editor-toolbar" id="editorToolbar">
-        <button class="tool-btn selected" data-tool="move" title="Drag a photo to reposition it in the strip"><span
-            class="tool-icon">✋</span><span class="tool-label">Move</span></button>
-        <button class="tool-btn" data-tool="resize" title="Drag a shot's corner to resize it"><span
-            class="tool-icon">⤡</span><span class="tool-label">Resize</span></button>
-        <button class="tool-btn" data-tool="crop" title="Drag inside a photo to pan/crop it"><span
-            class="tool-icon">⤢</span><span class="tool-label">Crop</span></button>
-        <button class="tool-btn" data-tool="draw"><span class="tool-icon">✏️</span><span
-            class="tool-label">Draw</span></button>
-        <button class="tool-btn" data-tool="erase"><span class="tool-icon">🧽</span><span
-            class="tool-label">Erase</span></button>
-        <button class="tool-btn" data-tool="text"><span class="tool-icon">🔤</span><span
-            class="tool-label">Text</span></button>
-        <button class="tool-btn" data-tool="photo"><span class="tool-icon">🖼️</span><span
-            class="tool-label">Photo</span></button>
-        <button class="tool-btn" id="editorUndoBtn" title="Undo"><span class="tool-icon">↩</span><span
-            class="tool-label">Undo</span></button>
-        <button class="tool-btn" id="editorRedoBtn" title="Redo"><span class="tool-icon">↪</span><span
-            class="tool-label">Redo</span></button>
-        <button class="tool-btn" id="editorResetBtn" title="Reset everything"><span class="tool-icon">⟲</span><span
-            class="tool-label">Reset</span></button>
+        <button class="tool-btn selected" data-tool="move" title="Drag a photo to reposition it in the strip"><span class="tool-icon">✋</span><span class="tool-label">Move</span></button>
+        <button class="tool-btn" data-tool="resize" title="Drag a shot's corner to resize it"><span class="tool-icon">⤡</span><span class="tool-label">Resize</span></button>
+        <button class="tool-btn" data-tool="crop" title="Drag inside a photo to pan/crop it"><span class="tool-icon">⤢</span><span class="tool-label">Crop</span></button>
+        <button class="tool-btn" data-tool="draw"><span class="tool-icon">✏️</span><span class="tool-label">Draw</span></button>
+        <button class="tool-btn" data-tool="erase"><span class="tool-icon">🧽</span><span class="tool-label">Erase</span></button>
+        <button class="tool-btn" data-tool="text"><span class="tool-icon">🔤</span><span class="tool-label">Text</span></button>
+        <button class="tool-btn" data-tool="photo"><span class="tool-icon">🖼️</span><span class="tool-label">Photo</span></button>
+        <button class="tool-btn" id="editorUndoBtn" title="Undo"><span class="tool-icon">↩</span><span class="tool-label">Undo</span></button>
+        <button class="tool-btn" id="editorRedoBtn" title="Redo"><span class="tool-icon">↪</span><span class="tool-label">Redo</span></button>
+        <button class="tool-btn" id="editorResetBtn" title="Reset everything"><span class="tool-icon">⟲</span><span class="tool-label">Reset</span></button>
       </div>
 
       <div class="editor-controls-row">
@@ -163,14 +154,12 @@
             <option value="'Caveat', cursive">Handwritten</option>
           </select>
         </label>
-        <button class="tool-btn" id="editorRotateLayerBtn" style="display:none;"><span class="tool-icon">↻</span><span
-            class="tool-label">Rotate</span></button>
-        <button class="tool-btn" id="editorFlipLayerBtn" style="display:none;"><span class="tool-icon">🔁</span><span
-            class="tool-label">Flip</span></button>
+        <button class="tool-btn" id="editorRotateLayerBtn" style="display:none;"><span class="tool-icon">↻</span><span class="tool-label">Rotate</span></button>
+        <button class="tool-btn" id="editorFlipLayerBtn" style="display:none;"><span class="tool-icon">🔁</span><span class="tool-label">Flip</span></button>
         <label id="editorZoomWrap" style="display:none;">Zoom <input type="range" id="editorZoom" min="100" max="300"
             value="100"></label>
-        <button class="tool-btn" id="editorDeleteBtn" style="display:none;"><span class="tool-icon">🗑️</span><span
-            class="tool-label">Delete</span></button>
+        <button class="tool-btn" id="editorEditTextBtn" style="display:none;"><span class="tool-icon">✏️</span><span class="tool-label">Edit text</span></button>
+        <button class="tool-btn" id="editorDeleteBtn" style="display:none;"><span class="tool-icon">🗑️</span><span class="tool-label">Delete</span></button>
         <label class="tool-btn" id="editorFrameUploadLabel" style="cursor:pointer;">
           <span class="tool-icon">🖼️</span><span class="tool-label">Custom frame</span>
           <input type="file" id="editorFrameUpload" accept="image/png" style="display:none;">

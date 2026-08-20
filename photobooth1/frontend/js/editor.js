@@ -50,6 +50,7 @@ const PhotoEditor = (() => {
   let dragStart = null;
   let dragStartVal = null;
   let resizingShotIdx = null;
+  let resizeAspect = 1;
 
   let onSaveCb = null;
   let textEditEl = null;
@@ -203,8 +204,11 @@ const PhotoEditor = (() => {
   }
 
   function textBounds(o) {
+    ctx.save();
     ctx.font = `600 ${o.h}px ${o.font}`;
+    ctx.textAlign = 'left';
     const m = ctx.measureText(o.text);
+    ctx.restore();
     const w = Math.max(24, m.width);
     return { x: o.x - 6, y: o.y - 4, w: w + 12, h: o.h + 10 };
   }
@@ -222,7 +226,9 @@ const PhotoEditor = (() => {
       if (customFrameImg) {
         ctx.drawImage(customFrameImg, 0, 0, width, height);
       } else if (frameRenderer) {
+        ctx.save();
         frameRenderer(ctx, width, height);
+        ctx.restore();
       }
 
       shots.forEach((shot, i) => {
@@ -281,6 +287,7 @@ const PhotoEditor = (() => {
         ctx.fillStyle = o.color;
         ctx.font = `600 ${o.h}px ${o.font}`;
         ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
         ctx.fillText(o.text, o.x, o.y);
       } else if (o.type === 'image' && o.img) {
         ctx.drawImage(o.img, o.x, o.y, o.w, o.h);
@@ -428,6 +435,7 @@ const PhotoEditor = (() => {
         dragMode = 'shot-resize';
         dragTarget = shotSizes[handleIdx];
         resizingShotIdx = handleIdx;
+        resizeAspect = dragTarget.w / dragTarget.h;
         dragStart = pos;
         return;
       }
@@ -437,6 +445,7 @@ const PhotoEditor = (() => {
         dragMode = 'shot-resize';
         dragTarget = shotSizes[shotIdx];
         resizingShotIdx = shotIdx;
+        resizeAspect = dragTarget.w / dragTarget.h;
         dragStart = pos;
       }
       return;
@@ -504,8 +513,12 @@ const PhotoEditor = (() => {
     }
     if (dragMode === 'shot-resize') {
       const dx = pos.x - dragStart.x, dy = pos.y - dragStart.y;
-      dragTarget.w = Math.max(60, dragTarget.w + dx);
-      dragTarget.h = Math.max(60, dragTarget.h + dy);
+      // Preserve aspect ratio throughout the drag (same fix as image
+      // objects) -- drive off whichever axis moved more so it never looks
+      // stretched, not even mid-drag.
+      const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy * resizeAspect;
+      dragTarget.w = Math.max(60, dragTarget.w + delta);
+      dragTarget.h = Math.max(60 / resizeAspect, dragTarget.w / resizeAspect);
       dragStart = pos;
       render();
       return;
@@ -558,11 +571,12 @@ const PhotoEditor = (() => {
 
   function addTextObject() {
     pushHistory();
-    const obj = { id: nextObjectId++, type: 'text', x: width / 2 - 60, y: height / 2 - 14, h: 28, text: 'Double-click to edit', color: currentColor, font: currentFont };
+    const obj = { id: nextObjectId++, type: 'text', x: width / 2 - 60, y: height / 2 - 14, h: 28, text: 'Text', color: currentColor, font: currentFont };
     objects.push(obj);
     selectedId = obj.id;
     render();
     updateContextControls();
+    startTextEdit(obj);
   }
 
   function triggerPhotoUpload() {
@@ -660,6 +674,7 @@ const PhotoEditor = (() => {
 
   function updateContextControls() {
     const deleteBtn = document.getElementById('editorDeleteBtn');
+    const editTextBtn = document.getElementById('editorEditTextBtn');
     const fontWrap = document.getElementById('editorFontWrap');
     const rotateBtn = document.getElementById('editorRotateLayerBtn');
     const flipBtn = document.getElementById('editorFlipLayerBtn');
@@ -668,6 +683,7 @@ const PhotoEditor = (() => {
     const selectedObj = objects.find(o => o.id === selectedId);
 
     deleteBtn.style.display = selectedObj ? 'inline-flex' : 'none';
+    if (editTextBtn) editTextBtn.style.display = (selectedObj && selectedObj.type === 'text') ? 'inline-flex' : 'none';
     fontWrap.style.display = (selectedObj && selectedObj.type === 'text') ? 'inline-flex' : 'none';
 
     const showLayerControls = mode === 'flat' || currentTool === 'crop';
@@ -717,6 +733,13 @@ const PhotoEditor = (() => {
     });
 
     document.getElementById('editorDeleteBtn').addEventListener('click', deleteSelected);
+    const editTextBtn = document.getElementById('editorEditTextBtn');
+    if (editTextBtn) {
+      editTextBtn.addEventListener('click', () => {
+        const selectedObj = objects.find(o => o.id === selectedId);
+        if (selectedObj && selectedObj.type === 'text') startTextEdit(selectedObj);
+      });
+    }
     document.getElementById('editorUndoBtn').addEventListener('click', undo);
     document.getElementById('editorRedoBtn').addEventListener('click', redo);
 
@@ -781,7 +804,10 @@ const PhotoEditor = (() => {
       if (hit && hit.obj.type === 'text') startTextEdit(hit.obj);
     });
 
-    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointerdown', (e) => {
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not critical */ }
+      onPointerDown(e);
+    });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);

@@ -51,6 +51,55 @@ function stripDims(shotCount) {
 }
 
 // ---------- Photo gallery ----------
+function buildPhotoCard(docId, data) {
+  const wrap = document.createElement('div');
+  const date = data.createdAt ? data.createdAt.toDate().toLocaleString() : 'Just now';
+  wrap.innerHTML = `
+    <img src="${data.imageData}" alt="Photo from room ${data.roomCode}">
+    <div class="meta">${data.roomCode} · ${date}${data.editedFrom ? ' · <span style="color:var(--clay);">Edited copy</span>' : ''}</div>
+    <div class="button-row" style="margin-top:6px;">
+      <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="edit">Edit</button>
+      <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="remove">Remove</button>
+    </div>
+  `;
+
+  wrap.querySelector('[data-action="edit"]').onclick = () => {
+    const img = new Image();
+    img.onload = () => {
+      PhotoEditor.openFlat({
+        imageSrc: data.imageData,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        onSave: async ({ dataUrl }) => {
+          const newData = {
+            roomCode: data.roomCode,
+            imageData: dataUrl,
+            editedFrom: docId,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          };
+          const ref = await db.collection('photos').add(newData);
+          const grid = document.getElementById('photoGrid');
+          const emptyMsg = grid.querySelector('p');
+          if (emptyMsg) emptyMsg.remove();
+          grid.prepend(buildPhotoCard(ref.id, { ...newData, createdAt: null }));
+        }
+      });
+    };
+    img.src = data.imageData;
+  };
+
+  wrap.querySelector('[data-action="remove"]').onclick = async () => {
+    const ok = await UIDialog.confirm('Remove this photo? This can\'t be undone.');
+    if (!ok) return;
+    await db.collection('photos').doc(docId).delete();
+    wrap.remove();
+    const grid = document.getElementById('photoGrid');
+    if (!grid.children.length) grid.innerHTML = '<p>No photos saved yet.</p>';
+  };
+
+  return wrap;
+}
+
 async function loadPhotos() {
   const grid = document.getElementById('photoGrid');
   grid.innerHTML = '<p>Loading…</p>';
@@ -64,51 +113,7 @@ async function loadPhotos() {
       return;
     }
 
-    snap.forEach(doc => {
-      const data = doc.data();
-      const wrap = document.createElement('div');
-      const date = data.createdAt ? data.createdAt.toDate().toLocaleString() : '';
-      wrap.innerHTML = `
-        <img src="${data.imageData}" alt="Photo from room ${data.roomCode}">
-        <div class="meta">${data.roomCode} · ${date}${data.editedFrom ? ' · <span style="color:var(--clay);">Edited copy</span>' : ''}</div>
-        <div class="button-row" style="margin-top:6px;">
-          <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="edit">Edit</button>
-          <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="remove">Remove</button>
-        </div>
-      `;
-
-      wrap.querySelector('[data-action="edit"]').onclick = () => {
-        const img = new Image();
-        img.onload = () => {
-          PhotoEditor.openFlat({
-            imageSrc: data.imageData,
-            width: img.naturalWidth,
-            height: img.naturalHeight,
-            onSave: async ({ dataUrl }) => {
-              // Save as a new, separate photo rather than overwriting the
-              // original -- keeps both the untouched and edited versions.
-              await db.collection('photos').add({
-                roomCode: data.roomCode,
-                imageData: dataUrl,
-                editedFrom: doc.id,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-              });
-              loadPhotos();
-            }
-          });
-        };
-        img.src = data.imageData;
-      };
-
-      wrap.querySelector('[data-action="remove"]').onclick = async () => {
-        const ok = await UIDialog.confirm('Remove this photo? This can\'t be undone.');
-        if (!ok) return;
-        await db.collection('photos').doc(doc.id).delete();
-        loadPhotos();
-      };
-
-      grid.appendChild(wrap);
-    });
+    snap.forEach(doc => grid.appendChild(buildPhotoCard(doc.id, doc.data())));
   } catch (err) {
     console.error(err);
     grid.innerHTML = '<p>Could not load photos.</p>';
@@ -166,7 +171,6 @@ function renderBorderPreview() {
   borderImg.onload = () => {
     ctx.clearRect(0, 0, width, height);
     ctx.drawImage(borderImg, 0, 0, width, height);
-    // Gray placeholder photo slots so the admin can see how it'll actually look
     ctx.fillStyle = 'rgba(120,120,120,0.5)';
     for (let i = 0; i < uploadShotCount; i++) {
       const y = padding + i * (photoH + gap);
@@ -193,19 +197,24 @@ document.getElementById('uploadBorderBtn').onclick = async () => {
   status.textContent = 'Uploading…';
 
   try {
-    await db.collection('borders').add({
+    const newData = {
       name,
       dataUrl: pendingBorderDataUrl,
       shotCount: uploadShotCount,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    };
+    const ref = await db.collection('borders').add(newData);
 
     status.textContent = 'Frame uploaded.';
     nameInput.value = '';
     document.getElementById('borderFile').value = '';
     pendingBorderDataUrl = null;
     document.getElementById('borderPreviewWrap').style.display = 'none';
-    loadBorders();
+
+    const grid = document.getElementById('borderGrid');
+    const emptyMsg = grid.querySelector('p');
+    if (emptyMsg) emptyMsg.remove();
+    grid.appendChild(buildBorderCard(ref.id, newData));
   } catch (err) {
     console.error(err);
     status.textContent = 'Upload failed. Check your connection and try again.';
@@ -215,6 +224,48 @@ document.getElementById('uploadBorderBtn').onclick = async () => {
 };
 
 // ---------- Border management ----------
+function buildBorderCard(docId, data) {
+  const wrap = document.createElement('div');
+  const metaEl = document.createElement('div');
+  metaEl.className = 'meta';
+  metaEl.textContent = `${data.name} · ${data.shotCount} shot${data.shotCount === 1 ? '' : 's'}`;
+
+  const img = document.createElement('img');
+  img.src = data.dataUrl;
+  img.alt = data.name;
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'button-row';
+  btnRow.style.marginTop = '6px';
+  btnRow.innerHTML = `
+    <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="rename">Rename</button>
+    <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="remove">Remove</button>
+  `;
+
+  wrap.appendChild(img);
+  wrap.appendChild(metaEl);
+  wrap.appendChild(btnRow);
+
+  btnRow.querySelector('[data-action="rename"]').onclick = async () => {
+    const newName = await UIDialog.prompt('New name for this frame:', data.name);
+    if (!newName) return;
+    await db.collection('borders').doc(docId).set({ name: newName }, { merge: true });
+    data.name = newName;
+    metaEl.textContent = `${data.name} · ${data.shotCount} shot${data.shotCount === 1 ? '' : 's'}`;
+  };
+
+  btnRow.querySelector('[data-action="remove"]').onclick = async () => {
+    const ok = await UIDialog.confirm('Remove this frame? This can\'t be undone.');
+    if (!ok) return;
+    await db.collection('borders').doc(docId).delete();
+    wrap.remove();
+    const grid = document.getElementById('borderGrid');
+    if (!grid.children.length) grid.innerHTML = '<p>No custom frames uploaded yet.</p>';
+  };
+
+  return wrap;
+}
+
 async function loadBorders() {
   const grid = document.getElementById('borderGrid');
   grid.innerHTML = '<p>Loading…</p>';
@@ -228,34 +279,7 @@ async function loadBorders() {
       return;
     }
 
-    snap.forEach(doc => {
-      const data = doc.data();
-      const wrap = document.createElement('div');
-      wrap.innerHTML = `
-        <img src="${data.dataUrl}" alt="${data.name}">
-        <div class="meta">${data.name} · ${data.shotCount} shot${data.shotCount === 1 ? '' : 's'}</div>
-        <div class="button-row" style="margin-top:6px;">
-          <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="rename">Rename</button>
-          <button class="btn btn-ghost" style="padding:6px 12px; font-size:0.8rem;" data-action="remove">Remove</button>
-        </div>
-      `;
-
-      wrap.querySelector('[data-action="rename"]').onclick = async () => {
-        const newName = await UIDialog.prompt('New name for this frame:', data.name);
-        if (!newName) return;
-        await db.collection('borders').doc(doc.id).set({ name: newName }, { merge: true });
-        loadBorders();
-      };
-
-      wrap.querySelector('[data-action="remove"]').onclick = async () => {
-        const ok = await UIDialog.confirm('Remove this frame? This can\'t be undone.');
-        if (!ok) return;
-        await db.collection('borders').doc(doc.id).delete();
-        loadBorders();
-      };
-
-      grid.appendChild(wrap);
-    });
+    snap.forEach(doc => grid.appendChild(buildBorderCard(doc.id, doc.data())));
   } catch (err) {
     console.error(err);
     grid.innerHTML = '<p>Could not load frames.</p>';
