@@ -55,11 +55,16 @@ class MeshRoom {
   }
 
   async init() {
+    // No aspectRatio hint here on purpose -- some webcam drivers respond to
+    // a forced ratio by baking black letterbox bars directly into the video
+    // frame instead of just delivering their native feed. We cover-crop
+    // into our own fixed per-person shape ourselves (see PERSON_SLOT_W/H in
+    // room.js), so it's more reliable to just take whatever native aspect
+    // the camera gives us and crop it consistently on our end.
     const videoConstraints = {
       facingMode: 'user',
       width: { ideal: 640 },
-      height: { ideal: 480 },
-      aspectRatio: { ideal: 4 / 3 }
+      height: { ideal: 480 }
     };
 
     // Request camera + mic together so the connection carries audio from

@@ -1,3 +1,12 @@
+// Every person always gets this SAME slot size, regardless of how many
+// people are in the room -- the strip grows wider for more people instead
+// of everyone getting squeezed into an ever-narrower sliver. This is also
+// the exact aspect ratio used for the live camera preview and the capture
+// buffer, so what's seen live during the countdown is always precisely
+// what lands in the final strip.
+const PERSON_SLOT_W = 320;
+const PERSON_SLOT_H = 360;
+
 const params = new URLSearchParams(window.location.search);
 const roomCode = params.get('code');
 const peerId = sessionStorage.getItem('peerId');
@@ -170,12 +179,11 @@ function reorderTiles() {
 // caps a solo tile's width and forces exactly-2 tiles side by side even on
 // narrow mobile screens.
 function updateVideoGridLayout(tileCount) {
-  const n = Math.max(1, tileCount);
-  // width:height as clean integers (480 : 360*n) rather than a single
-  // decimal ratio -- some mobile browsers don't reliably parse
-  // `aspect-ratio: 0.667` but all of them handle `480 / 720` correctly.
-  videoGrid.style.setProperty('--tile-w', 480);
-  videoGrid.style.setProperty('--tile-h', 360 * n);
+  // Same fixed slot shape every person always gets (see PERSON_SLOT_W/H),
+  // regardless of how many people are in the room -- doesn't get narrower
+  // and more cropped as more people join.
+  videoGrid.style.setProperty('--tile-w', PERSON_SLOT_W);
+  videoGrid.style.setProperty('--tile-h', PERSON_SLOT_H);
   videoGrid.classList.toggle('tiles-1', tileCount === 1);
   videoGrid.classList.toggle('tiles-2', tileCount === 2);
 }
@@ -338,10 +346,9 @@ function captureShotLayers() {
     .sort((a, b) => a.dataset.peerId.localeCompare(b.dataset.peerId));
   const layers = [];
 
-  const slotAspect = (480 / Math.max(1, tiles.length)) / 360;
-  let baseW, baseH;
-  if (slotAspect >= 1) { baseH = 480; baseW = Math.round(480 * slotAspect); }
-  else { baseW = 360; baseH = Math.round(360 / slotAspect); }
+  // Same fixed slot shape as the live preview and the final strip -- see
+  // PERSON_SLOT_W/H at the top of this file.
+  const baseW = PERSON_SLOT_W, baseH = PERSON_SLOT_H;
 
   tiles.forEach((tile) => {
     const video = tile.querySelector('video');
@@ -435,8 +442,10 @@ async function getFrameRenderer(photoAreaHeight) {
   return (ctx, w, h) => { ctx.fillStyle = '#FBF7EE'; ctx.fillRect(0, 0, w, h); };
 }
 
-function stripLayout(count) {
-  const padding = 24, photoW = 480, photoH = 360, gap = 14;
+function stripLayout(count, layerCount) {
+  const padding = 24, photoH = PERSON_SLOT_H, gap = 14;
+  const n = Math.max(1, layerCount || 1);
+  const photoW = PERSON_SLOT_W * n;
   const width = photoW + padding * 2;
   const height = padding * 2 + count * photoH + (count - 1) * gap + 40;
   const shotRects = [];
@@ -567,7 +576,7 @@ function applyLayerTransform(ctx, img, crop, destRect) {
 async function renderFinalStrip() {
   await document.fonts.ready;
 
-  const layout = stripLayout(capturedShots.length);
+  const layout = stripLayout(capturedShots.length, capturedShots[0] ? capturedShots[0].layers.length : 1);
   const hasCaption = caption.trim().length > 0;
   const dateStr = includeDate ? new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
 
@@ -697,7 +706,7 @@ async function renderFinalStrip() {
 
 // ---------- Editor ----------
 document.getElementById('openEditorBtn').onclick = async () => {
-  const layout = stripLayout(capturedShots.length);
+  const layout = stripLayout(capturedShots.length, capturedShots[0] ? capturedShots[0].layers.length : 1);
   const frameRenderer = await getFrameRenderer();
 
   PhotoEditor.openStrip({

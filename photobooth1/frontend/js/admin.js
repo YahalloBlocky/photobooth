@@ -43,8 +43,30 @@ document.getElementById('logoutBtn').onclick = () => {
 
 // Same strip layout math used in room.js, so the preview here matches
 // what users will actually see.
-function stripDims(shotCount) {
-  const padding = 24, photoW = 480, photoH = 360, gap = 14;
+// Re-encodes an image as compressed JPEG so it fits Firestore's 1MB
+// per-document limit -- PhotoEditor exports raw, uncompressed PNGs, which
+// were silently failing to save whenever the edited photo was too large.
+function compressDataUrl(dataUrl, quality) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.src = dataUrl;
+  });
+}
+
+function stripDims(shotCount, layerCount) {
+  const padding = 24, personW = 320, photoH = 360, gap = 14;
+  const n = Math.max(1, layerCount || 2); // preview assumes 2 people by default
+  const photoW = personW * n;
   const width = photoW + padding * 2;
   const height = padding * 2 + shotCount * photoH + (shotCount - 1) * gap + 40;
   return { width, height, padding, photoW, photoH, gap };
@@ -71,17 +93,27 @@ function buildPhotoCard(docId, data) {
         width: img.naturalWidth,
         height: img.naturalHeight,
         onSave: async ({ dataUrl }) => {
-          const newData = {
-            roomCode: data.roomCode,
-            imageData: dataUrl,
-            editedFrom: docId,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          };
-          const ref = await db.collection('photos').add(newData);
-          const grid = document.getElementById('photoGrid');
-          const emptyMsg = grid.querySelector('p');
-          if (emptyMsg) emptyMsg.remove();
-          grid.prepend(buildPhotoCard(ref.id, { ...newData, createdAt: null }));
+          try {
+            const compressed = await compressDataUrl(dataUrl, 0.7);
+            if (compressed.length > 900000) {
+              await UIDialog.alert('This edited photo is too large to save (even after compression). Try removing some added images or drawings.');
+              return;
+            }
+            const newData = {
+              roomCode: data.roomCode,
+              imageData: compressed,
+              editedFrom: docId,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+            const ref = await db.collection('photos').add(newData);
+            const grid = document.getElementById('photoGrid');
+            const emptyMsg = grid.querySelector('p');
+            if (emptyMsg) emptyMsg.remove();
+            grid.prepend(buildPhotoCard(ref.id, { ...newData, createdAt: null }));
+          } catch (err) {
+            console.error(err);
+            await UIDialog.alert('Could not save the edited photo. Check your connection and try again.');
+          }
         }
       });
     };
