@@ -179,11 +179,9 @@ function reorderTiles() {
 // caps a solo tile's width and forces exactly-2 tiles side by side even on
 // narrow mobile screens.
 function updateVideoGridLayout(tileCount) {
-  // Same fixed slot shape every person always gets (see PERSON_SLOT_W/H),
-  // regardless of how many people are in the room -- doesn't get narrower
-  // and more cropped as more people join.
-  videoGrid.style.setProperty('--tile-w', PERSON_SLOT_W);
-  videoGrid.style.setProperty('--tile-h', PERSON_SLOT_H);
+  // Aspect ratio is now fixed directly in CSS (.video-tile's padding-bottom
+  // trick) rather than set here via custom properties -- this just handles
+  // the grid column arrangement.
   videoGrid.classList.toggle('tiles-1', tileCount === 1);
   videoGrid.classList.toggle('tiles-2', tileCount === 2);
 }
