@@ -14,9 +14,10 @@
 // =========================================================
 
 const PhotoEditor = (() => {
-  let overlay, canvas, ctx, inkCanvas, inkCtx;
+  let overlay, canvas, ctx, inkCanvas, inkCtx, canvasWrap;
   let mode = 'strip';
   let width = 0, height = 0;
+  let viewZoom = 1; // 1 = fit whole strip in view; >1 = zoomed in for precision editing
 
   // 'flat' mode
   let flatImg = null;
@@ -60,8 +61,26 @@ const PhotoEditor = (() => {
     overlay = document.getElementById('editorOverlay');
     canvas = document.getElementById('editorCanvas');
     ctx = canvas.getContext('2d');
+    canvasWrap = canvas.parentElement;
     inkCanvas = document.getElementById('inkLayerCanvas') || document.createElement('canvas');
     inkCtx = inkCanvas.getContext('2d');
+  }
+
+  // Computes the scale that fits the canvas entirely within the wrapper,
+  // then applies viewZoom on top for precision editing.
+  function applyCanvasDisplaySize() {
+    if (!canvasWrap || !width || !height) return;
+    const availW = canvasWrap.clientWidth - 28;
+    const availH = canvasWrap.clientHeight - 28;
+    const fitScale = Math.min(availW / width, availH / height, 1);
+    const scale = Math.max(0.1, fitScale * viewZoom);
+    canvas.style.width = (width * scale) + 'px';
+    canvas.style.height = (height * scale) + 'px';
+  }
+
+  function setViewZoom(z) {
+    viewZoom = Math.max(1, Math.min(4, z));
+    applyCanvasDisplaySize();
   }
 
   // ---------- History ----------
@@ -711,6 +730,14 @@ const PhotoEditor = (() => {
     if (wireOnce._done) return;
     wireOnce._done = true;
 
+    const zoomInBtn = document.getElementById('editorZoomInBtn');
+    const zoomOutBtn = document.getElementById('editorZoomOutBtn');
+    const zoomFitBtn = document.getElementById('editorZoomFitBtn');
+    if (zoomInBtn) zoomInBtn.addEventListener('click', () => setViewZoom(viewZoom + 0.5));
+    if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => setViewZoom(viewZoom - 0.5));
+    if (zoomFitBtn) zoomFitBtn.addEventListener('click', () => setViewZoom(1));
+    window.addEventListener('resize', () => { if (overlay.classList.contains('open')) applyCanvasDisplaySize(); });
+
     document.getElementById('editorToolbar').addEventListener('click', (e) => {
       const btn = e.target.closest('.tool-btn[data-tool]');
       if (btn) selectTool(btn.dataset.tool);
@@ -846,6 +873,7 @@ const PhotoEditor = (() => {
     mode = 'flat';
     width = w; height = h;
     canvas.width = w; canvas.height = h;
+    viewZoom = 1;
     actions = []; objects = []; selectedId = null;
     undoStack = []; redoStack = [];
     onSaveCb = onSave;
@@ -867,7 +895,7 @@ const PhotoEditor = (() => {
     };
     img.src = imageSrc;
 
-    overlay.classList.add('open'); document.body.classList.add('scroll-locked');
+    overlay.classList.add('open'); document.body.classList.add('scroll-locked'); requestAnimationFrame(applyCanvasDisplaySize);
   }
 
   function openStrip({ shots: shotSrcs, defaultShotPositions, defaultShotSize: sSize, width: w, height: h, frameRenderer: fr, initialState, onSave }) {
@@ -877,6 +905,7 @@ const PhotoEditor = (() => {
     width = w; height = h;
     canvas.width = w; canvas.height = h;
     defaultSizeRef = sSize;
+    viewZoom = 1;
     defaultPositionsRef = defaultShotPositions;
     frameRenderer = fr;
     onSaveCb = onSave;
@@ -933,7 +962,7 @@ const PhotoEditor = (() => {
       objects = restoredObjMeta.map(o => o.type === 'image' ? { ...o, img: imgCache[o.imgSrc] } : { ...o });
       activeLayerRef = shots.length ? { shotIdx: 0, layerIdx: 0 } : null;
 
-      const afterFrame = () => { renderInkLayer(); render(); updateContextControls(); overlay.classList.add('open'); document.body.classList.add('scroll-locked'); };
+      const afterFrame = () => { renderInkLayer(); render(); updateContextControls(); overlay.classList.add('open'); document.body.classList.add('scroll-locked'); requestAnimationFrame(applyCanvasDisplaySize); };
 
       if (initialState && initialState.customFrameSrc) {
         const cf = new Image();

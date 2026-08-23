@@ -888,15 +888,13 @@ input[type="password"]:focus {
 .editor-toolbar::-webkit-scrollbar {
   height: 5px;
 }
-
 .editor-toolbar::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
 }
 
-.editor-toolbar>span[style*="flex:1"] {
-  display: none;
-  /* spacer no longer needed once toolbar scrolls */
+.editor-toolbar > span[style*="flex:1"] {
+  display: none; /* spacer no longer needed once toolbar scrolls */
 }
 
 .tool-btn {
@@ -955,7 +953,6 @@ input[type="password"]:focus {
 .editor-controls-row::-webkit-scrollbar {
   height: 5px;
 }
-
 .editor-controls-row::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
@@ -1013,13 +1010,11 @@ input[type="password"]:focus {
   gap: 6px;
   align-items: center;
 }
-
 .view-zoom-controls .tool-btn {
   min-height: 40px;
   min-width: 40px;
   padding: 8px 10px;
 }
-
 .view-zoom-controls .tool-icon {
   font-size: 1.3rem;
 }
