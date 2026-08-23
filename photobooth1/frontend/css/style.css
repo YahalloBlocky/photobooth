@@ -484,10 +484,29 @@ input[type="password"]:focus {
 
 .video-tile {
   position: relative;
+  width: 100%;
+  height: 0;
+  /* padding-bottom percentages are always based on the element's WIDTH
+     (even for vertical padding) -- a long-standing CSS quirk we're using
+     on purpose here. This is a bulletproof way to force an aspect ratio
+     that works identically in every browser, unlike the `aspect-ratio`
+     property + custom-property combo we tried before, which kept
+     silently falling back to its default in some browsers. 112.5% =
+     PERSON_SLOT_H / PERSON_SLOT_W * 100 (360/320). */
+  padding-bottom: 112.5%;
   background: #000;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  aspect-ratio: var(--tile-w, 4) / var(--tile-h, 3);
+}
+
+/* This was completely unstyled before -- no width/height rule at all --
+   which meant it just shrank to fit the video's natural content size
+   instead of filling the tile. That's what caused the black gap. */
+.video-transform-wrap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .video-tile video {
@@ -840,22 +859,18 @@ input[type="password"]:focus {
   padding: 14px;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
-/* The whole strip must always be visible at once, like Picsart/Canva --
-   no zooming out or scrolling needed to see it. Scrolling the canvas
-   itself doesn't work well anyway since touch-drag is already used for
-   editing (move/crop/draw), which conflicts with drag-to-scroll. */
+/* Sized via JS (see editor.js applyCanvasDisplaySize) so it can either fit
+   the whole strip in view (default) or be zoomed in for precision editing,
+   with the wrapper above scrolling to pan around once zoomed in. */
 .editor-canvas-wrap canvas {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
   border-radius: 4px;
   touch-action: none;
   cursor: crosshair;
   background: var(--surface);
+  flex-shrink: 0;
 }
 
 .editor-toolbar {
@@ -873,13 +888,15 @@ input[type="password"]:focus {
 .editor-toolbar::-webkit-scrollbar {
   height: 5px;
 }
+
 .editor-toolbar::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
 }
 
-.editor-toolbar > span[style*="flex:1"] {
-  display: none; /* spacer no longer needed once toolbar scrolls */
+.editor-toolbar>span[style*="flex:1"] {
+  display: none;
+  /* spacer no longer needed once toolbar scrolls */
 }
 
 .tool-btn {
@@ -938,6 +955,7 @@ input[type="password"]:focus {
 .editor-controls-row::-webkit-scrollbar {
   height: 5px;
 }
+
 .editor-controls-row::-webkit-scrollbar-thumb {
   background: var(--line);
   border-radius: 3px;
@@ -988,6 +1006,22 @@ input[type="password"]:focus {
   gap: 12px;
   flex-wrap: wrap;
   flex-shrink: 0;
+}
+
+.view-zoom-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.view-zoom-controls .tool-btn {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 8px 10px;
+}
+
+.view-zoom-controls .tool-icon {
+  font-size: 1.3rem;
 }
 
 .shot-thumb {
