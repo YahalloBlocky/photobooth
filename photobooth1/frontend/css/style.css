@@ -1131,7 +1131,10 @@ input[type="password"]:focus {
 
   .hero {
     padding: 40px 16px 28px;
+    margin-top: 50px;
   }
+
+
 }
 
 @media (max-width: 520px) {
