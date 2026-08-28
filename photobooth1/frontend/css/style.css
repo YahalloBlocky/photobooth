@@ -862,6 +862,14 @@ input[type="password"]:focus {
   overflow: auto;
 }
 
+/* Centered flex items can't be scrolled to reveal their "before" (top/left)
+   overflow in most browsers -- only the "after" side is reachable. When
+   zoomed in, switch to flex-start so ALL of the overflow is scrollable. */
+.editor-canvas-wrap.zoomed {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
 /* Sized via JS (see editor.js applyCanvasDisplaySize) so it can either fit
    the whole strip in view (default) or be zoomed in for precision editing,
    with the wrapper above scrolling to pan around once zoomed in. */
@@ -1123,9 +1131,6 @@ input[type="password"]:focus {
 
   .hero {
     padding: 40px 16px 28px;
-    margin-top: 50px;
-
-
   }
 }
 

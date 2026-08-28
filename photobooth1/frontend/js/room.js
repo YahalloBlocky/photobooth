@@ -441,9 +441,13 @@ async function getFrameRenderer(photoAreaHeight) {
 }
 
 function stripLayout(count, layerCount) {
-  const padding = 24, photoH = PERSON_SLOT_H, gap = 14;
+  const padding = 38, gap = 14;
   const n = Math.max(1, layerCount || 1);
   const photoW = PERSON_SLOT_W * n;
+  // Height grows mildly with more people so wider rows (more people side
+  // by side) don't look overly flat/rectangular -- keeps each shot closer
+  // to square without changing what the camera itself captures.
+  const photoH = Math.round(PERSON_SLOT_H * (1 + (n - 1) * 0.18));
   const width = photoW + padding * 2;
   const height = padding * 2 + count * photoH + (count - 1) * gap + 40;
   const shotRects = [];

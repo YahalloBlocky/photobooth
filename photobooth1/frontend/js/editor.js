@@ -81,6 +81,9 @@ const PhotoEditor = (() => {
   function setViewZoom(z) {
     viewZoom = Math.max(1, Math.min(4, z));
     applyCanvasDisplaySize();
+    if (canvasWrap) canvasWrap.classList.toggle('zoomed', viewZoom > 1);
+    const panControl = document.getElementById('editorPanControl');
+    if (panControl) panControl.style.display = viewZoom > 1 ? 'grid' : 'none';
   }
 
   // ---------- History ----------
@@ -736,6 +739,23 @@ const PhotoEditor = (() => {
     if (zoomInBtn) zoomInBtn.addEventListener('click', () => setViewZoom(viewZoom + 0.5));
     if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => setViewZoom(viewZoom - 0.5));
     if (zoomFitBtn) zoomFitBtn.addEventListener('click', () => setViewZoom(1));
+
+    // Mobile pan buttons -- the canvas captures touch for editing (move/
+    // crop/draw), so native touch-scroll can't reach it. These buttons
+    // scroll the wrapper directly, working around that conflict.
+    const panStep = 120;
+    const panMap = {
+      editorPanUp: { top: -panStep },
+      editorPanDown: { top: panStep },
+      editorPanLeft: { left: -panStep },
+      editorPanRight: { left: panStep }
+    };
+    Object.keys(panMap).forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => {
+        if (canvasWrap) canvasWrap.scrollBy({ ...panMap[id], behavior: 'smooth' });
+      });
+    });
     window.addEventListener('resize', () => { if (overlay.classList.contains('open')) applyCanvasDisplaySize(); });
 
     document.getElementById('editorToolbar').addEventListener('click', (e) => {
