@@ -870,6 +870,50 @@ input[type="password"]:focus {
   align-items: flex-start;
 }
 
+.pan-control {
+  position: sticky;
+  bottom: 12px;
+  left: 12px;
+  display: grid;
+  grid-template-columns: 34px 34px 34px;
+  grid-template-rows: 34px 34px;
+  gap: 3px;
+  z-index: 10;
+}
+
+.pan-control button {
+  background: rgba(43, 35, 25, 0.75);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.pan-control button:active {
+  background: var(--clay);
+}
+
+#editorPanUp {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+#editorPanLeft {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+#editorPanRight {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+#editorPanDown {
+  grid-column: 2;
+  grid-row: 2;
+}
+
 /* Sized via JS (see editor.js applyCanvasDisplaySize) so it can either fit
    the whole strip in view (default) or be zoomed in for precision editing,
    with the wrapper above scrolling to pan around once zoomed in. */
@@ -1131,10 +1175,7 @@ input[type="password"]:focus {
 
   .hero {
     padding: 40px 16px 28px;
-    margin-top: 50px;
   }
-
-
 }
 
 @media (max-width: 520px) {
