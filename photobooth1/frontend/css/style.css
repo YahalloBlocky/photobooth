@@ -271,6 +271,7 @@ a {
 .hero {
   text-align: center;
   padding: 64px 24px 40px;
+  margin-top: 50px;
 }
 
 .hero h1 {
